@@ -60,7 +60,7 @@ trap 'kill $CPID $APID 2>/dev/null' EXIT # agent 重启是 exec，进程号不�
 
 # ---- 发布方仓库：当前代码（含没提交的改动）复制一份，依次打出 A（当前版本）→ B → C（带签名）三个版本的包
 title "打包"
-(cd "$SRC_ROOT" && { git ls-files; git ls-files -o --exclude-standard; } | sort -u) | while IFS= read -r f; do
+(cd "$SRC_ROOT" && { git -c core.quotepath=off ls-files; git -c core.quotepath=off ls-files -o --exclude-standard; } | sort -u) | while IFS= read -r f; do
   [ -f "$SRC_ROOT/$f" ] || continue
   mkdir -p "$T/vendor/$(dirname "$f")"; cp -p "$SRC_ROOT/$f" "$T/vendor/$f"
 done

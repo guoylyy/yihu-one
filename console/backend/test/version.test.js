@@ -21,3 +21,11 @@ test('版本更新说明里有当前版本', () => {
   const v = read('VERSION').trim()
   assert.match(read('console/docs/devcenter/releases.md'), new RegExp(`^## v${v.replace(/\./g, '\\.')}\\b`, 'm'), `console/docs/devcenter/releases.md 里没有「## v${v}」`)
 })
+
+test('install.sh 里写死的签名公钥和 platform/release.pub 一致', () => {
+  const pubPath = new URL('platform/release.pub', root)
+  if (!existsSync(pubPath)) return
+  const m = read('install.sh').match(/^RELEASE_PUB="([^"]+)"/m)
+  assert.ok(m, 'install.sh 里没有 RELEASE_PUB')
+  assert.equal(m[1].trim(), read('platform/release.pub').trim(), '换了签名密钥：install.sh 的 RELEASE_PUB 要一起改')
+})

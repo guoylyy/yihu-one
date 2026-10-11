@@ -21,6 +21,7 @@
 #   --no-openhex          构建控制台时不带 OpenHex 模型接入（其协议未定，对外分发时用）
 #   --dir <目录>          装到哪里（默认 ~/yihu-one）
 #   --src <包或地址>      更新包（.tar.gz）的本地路径或地址，或更新清单 latest.json 的地址
+#   --allow-unsigned      允许装没有签名的更新包（只用于 0.1.0 等签名之前的版本）
 #   --upgrade-url <地址>  以后查新版本用的 latest.json 地址（默认本项目发布页）；--offline 表示不联网查
 #   --git                 原地用当前 Git 检出安装，自动跟踪 release 分支（只用于自己维护、要跟最新代码的实例）
 #   --no-autostart        不装开机自启 / 常驻 agent（不建议：控制台里的插拔操作靠 agent 执行）
@@ -32,6 +33,19 @@
 set -uo pipefail
 
 RELEASES="https://github.com/guoylyy/yihu-one/releases/latest/download"
+# 发布方的签名公钥（和 platform/release.pub 一样，单元测试校验两处一致）：下载 / 拷来的更新包必须带对得上的签名才装。
+# 不能用包里自带的公钥校验包自己，所以写死在这里
+RELEASE_PUB="-----BEGIN PUBLIC KEY-----
+MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAunBdxxYycnbjBxezLt2A
+4Y61vvqZ1QKkIm9MpxNedHpFLwnPl+yqA+4lmVjAzxZeOR2In3bqxAe5VkAkqPxK
+CpvZgRwgZqpMMDDgLFm/5aVk1W5uHgsPUmlU1Ucv4yOuqyvYlE3dSU8hj4gON4Hv
+18SH5sRjP0obn0mxHcP59DFGZGzMc+qWRWlpfWg7iu8Q0zD9LDQq52cM1w8wfrFe
+reO8qYoO4lKUmstC/Yr3BmAcqtv5pz65J+5DNF5Ui2ZvQC5Q5GXZt03Eji4j3owW
+eKV1w0qSlUU09RgY7mvOWt7E66BqAZkNmgS5ItLxcJnXUmOxcPrMm09WTaTYwPKu
+Rm/qZQceGtoyRUD2yqqSu04BPy4xFLgzQlG3cddnJJLiQ5pbnsTDbmuOfpBOxxHO
+S9U08h8xjoYuh6l1AQfSU7O3joO4B33gcggTeoBOeopzNYgpzyx3PGbjlIbz5pma
+CQjgYYc2uBcCOcmsZs2HRrKcUKX7+nEX+8W5ovWQmj9lAgMBAAE=
+-----END PUBLIC KEY-----"
 DEFAULT_LATEST="$RELEASES/latest.json"
 
 info() { printf '\033[36m▶ %s\033[0m\n' "$*"; }
@@ -41,7 +55,7 @@ err()  { printf '\033[31m✗ %s\033[0m\n' "$*"; exit 1; }
 WARNINGS=0
 
 MODE="production"; LAN=""; COMPANY=""; URL=""; APPS_URL=""; FRP=""; CN=""; DEMO=""; NO_OPENHEX=""
-DEST=""; SRC=""; UPGRADE_URL="$DEFAULT_LATEST"; GIT=""; AUTOSTART="1"; YES=""
+DEST=""; SRC=""; UPGRADE_URL="$DEFAULT_LATEST"; GIT=""; AUTOSTART="1"; YES=""; ALLOW_UNSIGNED=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --test) MODE="test"; shift;;
@@ -60,6 +74,7 @@ while [ $# -gt 0 ]; do
     --git) GIT="1"; shift;;
     --no-autostart) AUTOSTART=""; shift;;
     --yes|-y) YES="1"; shift;;
+    --allow-unsigned) ALLOW_UNSIGNED="1"; shift;;
     -h|--help) sed -n '2,31p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0;;
     *) err "未知参数 $1（./install.sh --help 看用法）";;
   esac
@@ -176,15 +191,29 @@ fi
 
 # ---------------------------------------------------------------- 2. 取代码
 info "2/7 准备平台文件"
-fetch_package() { # fetch_package <包的本地路径或地址> [sha256]
-  local tmp; tmp="$(mktemp -d)"
+fetch_package() { # fetch_package <包的本地路径或地址> [sha256] [签名 base64]
+  local tmp sig="${3:-}"; tmp="$(mktemp -d)"
   case "$1" in
-    http://*|https://*) curl -fSL --progress-bar "$1" -o "$tmp/pkg.tar.gz" || err "下载失败：$1";;
-    *) [ -f "$1" ] || err "找不到更新包：$1"; cp "$1" "$tmp/pkg.tar.gz";;
+    http://*|https://*) curl -fSL --progress-bar "$1" -o "$tmp/pkg.tar.gz" || err "下载失败：$1"
+      [ -n "$sig" ] || sig="$(curl -fsSL --max-time 20 "$1.sig" 2>/dev/null || true)";;
+    *) [ -f "$1" ] || err "找不到更新包：$1"; cp "$1" "$tmp/pkg.tar.gz"
+      [ -n "$sig" ] || sig="$(cat "$1.sig" 2>/dev/null || true)";;
   esac
   if [ -n "${2:-}" ]; then
     local got; got="$( (shasum -a 256 "$tmp/pkg.tar.gz" 2>/dev/null || sha256sum "$tmp/pkg.tar.gz") | awk '{print $1}')"
     [ "$got" = "$2" ] || err "更新包校验失败（sha256 不一致），重新下载试试"
+  fi
+  # 签名：用写死在本脚本里的发布方公钥校验（和 yh upgrade 同一套：openssl RSA-SHA256，签名是 base64）
+  if [ -n "$sig" ]; then
+    printf '%s\n' "$RELEASE_PUB" > "$tmp/release.pub"
+    printf '%s' "$sig" | openssl base64 -d -A > "$tmp/pkg.sig" 2>/dev/null
+    openssl dgst -sha256 -verify "$tmp/release.pub" -signature "$tmp/pkg.sig" "$tmp/pkg.tar.gz" >/dev/null 2>&1 \
+      || err "更新包签名校验失败：包被改过，或者不是以虎发布的。从发布页重新下载"
+    ok "签名校验通过"
+  elif [ -n "$ALLOW_UNSIGNED" ]; then
+    warn "更新包没有签名，按 --allow-unsigned 继续"
+  else
+    err "更新包没有签名（${1##*/}.sig），不能确认是以虎发布的。从发布页下载带签名的包；签名之前的老版本（如 0.1.0）加 --allow-unsigned"
   fi
   mkdir -p "$DEST"
   tar -xzf "$tmp/pkg.tar.gz" -C "$DEST" --strip-components=1 || err "解压失败"
@@ -196,7 +225,7 @@ fetch_from_manifest() {
   j="$(curl -fsSL --max-time 20 "$1")" || return 1
   u="$(echo "$j" | jq -r '.url // empty')"; [ -n "$u" ] || err "更新清单里没有 url：$1"
   case "$u" in http://*|https://*) ;; *) u="${1%/*}/$u";; esac
-  fetch_package "$u" "$(echo "$j" | jq -r '.sha256 // empty')"
+  fetch_package "$u" "$(echo "$j" | jq -r '.sha256 // empty')" "$(echo "$j" | jq -r '.sig // empty')"
 }
 if [ -f "$DEST/yh" ]; then
   ok "使用已有的平台文件：$DEST（重复执行只补齐配置，不会动数据）"
