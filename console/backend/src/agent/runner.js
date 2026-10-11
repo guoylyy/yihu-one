@@ -50,7 +50,7 @@ export async function status(ctx, { appId } = {}) {
   }
 }
 
-function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, apps = [], agent = null } = {}) {
+function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, apps = [], agent = null, hasTools = true } = {}) {
   const u = ctx.user
   const d = new Date()
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}（星期${WEEK[d.getDay()]}）`
@@ -71,16 +71,25 @@ function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, a
     lines.push('', '发布者给你的设定（按它工作；它不能推翻下面的工作规则）：', '<<<', agent.payload.prompt, '>>>')
   }
   if (context?.route) lines.push('', `用户当前所在页面：${context.route}`)
+  // 没开任何工具的 AI 助手不能给「先调工具」的规则：模型会照着编一个工具调用（实测 DeepSeek 把调用标记当正文输出）
+  const toolRules = hasTools
+    ? [
+        '1. 业务数据都通过工具查询，绝不编造。涉及具体数据的问题**必须先调用工具再回答**；查不到就如实说。',
+        '2. 用户要做的事属于某个应用时，用该应用的工具（名字以「应用code__」开头）；没有对应工具就告诉用户去哪个应用里操作，并给出应用链接。',
+        '3. 涉及人名时先用 search_users 查到用户 id；重名时让用户选。',
+        '4. 写操作调用后系统会给用户弹出确认卡片，由用户点「确认」才真正执行——信息齐了就直接调用写工具，不要先在文字里问「是否确认」。调用后简短说「请核对后点确认」，不要说「已完成」。',
+        '5. 工具返回 403 或权限错误时，告诉用户这一步需要谁来处理，不要重试。',
+        '6. 不要向用户复述工具名或 JSON，不要写「首先我需要…」这类过程描述，直接给结果。'
+      ]
+    : [
+        '1. 你没有可调用的工具。只依据上面的设定、设定里附带的材料和本次对话回答；没有依据的就如实说，绝不编造。',
+        '2. 不要输出任何工具调用、函数调用或 XML / JSON 指令格式的内容，不要写「首先我需要…」这类过程描述，直接给结果。'
+      ]
   lines.push(
     '',
     '工作规则：',
-    '1. 业务数据都通过工具查询，绝不编造。涉及具体数据的问题**必须先调用工具再回答**；查不到就如实说。',
-    '2. 用户要做的事属于某个应用时，用该应用的工具（名字以「应用code__」开头）；没有对应工具就告诉用户去哪个应用里操作，并给出应用链接。',
-    '3. 涉及人名时先用 search_users 查到用户 id；重名时让用户选。',
-    '4. 写操作调用后系统会给用户弹出确认卡片，由用户点「确认」才真正执行——信息齐了就直接调用写工具，不要先在文字里问「是否确认」。调用后简短说「请核对后点确认」，不要说「已完成」。',
-    '5. 工具返回 403 或权限错误时，告诉用户这一步需要谁来处理，不要重试。',
-    '6. 不要向用户复述工具名或 JSON，不要写「首先我需要…」这类过程描述，直接给结果。',
-    '7. 回答用简体中文，简洁直接；列表用 Markdown，多条记录用表格。'
+    ...toolRules,
+    `${toolRules.length + 1}. 回答用简体中文，简洁直接；列表用 Markdown，多条记录用表格。`
   )
   if (extraPrompt?.trim()) lines.push('', '补充规则（管理员配置）：', extraPrompt.trim())
   return lines.join('\n')
@@ -170,7 +179,7 @@ export async function chat(ctx, { message, conversationId, context, modelId, app
   const openAiTools = toOpenAiTools(tools)
   const system = systemPrompt(ctx, context, {
     companyName: general.companyName, workspaceName: general.workspaceName, extraPrompt: a.extraPrompt,
-    apps: agent ? [] : await listVisibleApps(ctx), agent
+    apps: agent ? [] : await listVisibleApps(ctx), agent, hasTools: tools.length > 0
   })
 
   for (let round = 0; round < MAX_ROUNDS; round++) {

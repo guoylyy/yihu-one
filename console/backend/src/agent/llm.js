@@ -29,26 +29,38 @@ export async function getEmbeddingConfig({ modelId } = {}) {
   return { ...m, apiKey: openKey(m.apiKey) }
 }
 
+// 单次请求最多送几条（通义 text-embedding-v3/v4 上限 10）
+const EMBED_BATCH = 10
+
 /**
- * 文本 → 向量(OpenAI 兼容 /embeddings)。input 可多条, 批量返回
+ * 文本 → 向量(OpenAI 兼容 /embeddings)。input 可多条, 按 EMBED_BATCH 分批请求
  * 返回 number[][]（顺序与 input 一致）
  */
 export async function embed(input, { dimensions, modelId } = {}) {
   const cfg = await getEmbeddingConfig({ modelId })
   if (!cfg) throw new Error('还没有配置向量模型：请管理员在「模型与 AI → 新增模型」里加一个 embedding 模型（类型选 OpenAI 兼容，如通义 text-embedding-v3）')
-  const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/, '')
   const list = Array.isArray(input) ? input : [input]
+  const out = []
+  for (let i = 0; i < list.length; i += EMBED_BATCH) out.push(...await embedBatch(cfg, list.slice(i, i + EMBED_BATCH), dimensions))
+  return out
+}
+
+async function embedBatch(cfg, list, dimensions) {
+  const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/, '')
   const body = { model: cfg.model, input: list, ...(dimensions ? { dimensions } : {}) }
   let resp
-  try {
-    resp = await fetch(`${base}/embeddings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000)
-    })
-  } catch (e) {
-    throw new Error(`向量模型连不上：${e.message}`)
+  // 网络层失败（建连超时、连接被重置）重试一次；对端返回的 HTTP 错误不重试
+  for (let attempt = 1; !resp; attempt++) {
+    try {
+      resp = await fetch(`${base}/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000)
+      })
+    } catch (e) {
+      if (attempt >= 2 || e.name === 'TimeoutError') throw new Error(`向量模型连不上：${e.message}`)
+    }
   }
   if (!resp.ok) {
     const t = await resp.text().catch(() => '')

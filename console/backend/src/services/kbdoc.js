@@ -12,7 +12,6 @@ import { embed } from '../agent/llm.js'
 const TARGET_CHARS = 500 // 每片目标字数
 const OVERLAP_CHARS = 80 // 相邻片重叠, 避免句子被切断后语义丢失
 const MAX_CHARS = 200_000 // 单文档上限, 防止超长文档刷爆 embedding
-const EMBED_BATCH = 16
 
 // ---------- 解析 ----------
 
@@ -122,11 +121,7 @@ export async function processDocument(docId) {
 
     // 清掉旧片段(重处理时), 再批量向量化
     await prisma.kbChunk.deleteMany({ where: { documentId: docId } })
-    const vectors = []
-    for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
-      const part = chunks.slice(i, i + EMBED_BATCH)
-      vectors.push(...await embed(part))
-    }
+    const vectors = await embed(chunks)
     const rows = chunks.map((c, i) => ({
       documentId: docId, kbId: doc.kbId, ord: i, content: c, embedding: vectors[i] || []
     })).filter(r => Array.isArray(r.embedding) && r.embedding.length)

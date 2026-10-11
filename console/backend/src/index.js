@@ -3,6 +3,8 @@ import express from 'express'
 import cors from 'cors'
 import path from 'node:path'
 import fs from 'node:fs'
+import net from 'node:net'
+import dns from 'node:dns'
 import { errorHandler } from './lib/http.js'
 import { authenticate } from './lib/auth.js'
 import { bootstrap } from './lib/bootstrap.js'
@@ -22,6 +24,11 @@ import kbRouter from './routes/kb.js'
 import { oidcRouter, discoveryHandler } from './routes/oidc.js'
 import assetsRouter, { downloadHandler as assetDownload } from './routes/assets.js'
 import { startKbWorker } from './services/kbdoc.js'
+
+// 出网（模型、钉钉等）：Node 默认 IPv6/IPv4 竞速、每个地址只等 250ms，容器里 IPv6 不通且对端延迟稍高时会直接 ETIMEDOUT。
+// 改为优先 IPv4、按 DNS 顺序直连（纯 IPv6 的地址照样能连）
+dns.setDefaultResultOrder('ipv4first')
+net.setDefaultAutoSelectFamily(false)
 
 const app = express()
 app.set('trust proxy', true)
