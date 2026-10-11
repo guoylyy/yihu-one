@@ -1,0 +1,605 @@
+// 以虎 One 控制台数据模型
+// 控制台只做配置, 不放业务功能。分五块: 用户与组织 / 应用与统一认证 / 平台运维 / AI 与模型 / 设置与审计
+// 约定: 主键 Int 自增; 软删除用 deletedAt; JSON 字段存结构化配置
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ 用户与组织 ============
+
+/// 部门。dingDeptId 为空表示在控制台里建的(未同步钉钉)
+/// 空间（租户）：一套平台里相互隔离的组织边界（自己公司、兄弟公司、客户）。id=1 是默认空间，老数据都在里面
+/// 用户、部门、应用、知识库各属于一个空间；应用可以再分享给别的空间（extraSpaceIds）。可见性统一走 apps.visibleTo 的「空间 → 组织 → 人」
+model Space {
+  id        Int       @id @default(autoincrement())
+  code      String    @unique @db.VarChar(40)
+  name      String    @db.VarChar(100)
+  /// INTERNAL 自己公司 / CUSTOMER 客户空间
+  kind      String    @default("INTERNAL") @db.VarChar(20)
+  sort      Int       @default(0)
+  /// 空间自己的 VI { name?, logo?, theme?: { preset, tokens } }，null = 跟随平台（services/theme.js）
+  brand     Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model Department {
+  id           Int          @id @default(autoincrement())
+  dingDeptId   String?      @unique @db.VarChar(64)
+  /// 飞书部门 open_department_id, 从飞书同步通讯录时对上
+  feishuDeptId String?      @unique @db.VarChar(64)
+  name         String       @db.VarChar(100)
+  spaceId      Int          @default(1)
+  parentId     Int?
+  parent       Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  children     Department[] @relation("DeptTree")
+  /// 部门负责人(用户 id 数组), 统一认证返回给应用的 leaderOf 据此推导
+  leaderIds    Json?
+  sort         Int          @default(0)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+  members      UserDept[]
+}
+
+/// 用户。可以用账号密码登录, 也可以绑定钉钉 / 飞书 / 企业微信身份(扫码 / 客户端内免登)
+model User {
+  id            Int        @id @default(autoincrement())
+  /// 登录账号; 只用钉钉登录的人可以为空
+  username      String?    @unique @db.VarChar(50)
+  /// scrypt 哈希; 为空表示不能用密码登录
+  passwordHash  String?    @db.VarChar(200)
+  name          String     @db.VarChar(50)
+  /// 所属空间（默认空间 = 1）
+  spaceId       Int        @default(1)
+  mobile        String?    @db.VarChar(20)
+  email         String?    @db.VarChar(100)
+  avatar        String?    @db.VarChar(500)
+  jobNumber     String?    @db.VarChar(50)
+  title         String?    @db.VarChar(100)
+  dingUserId    String?    @unique @db.VarChar(64)
+  unionId       String?    @unique @db.VarChar(64)
+  /// 飞书身份：open_id（本应用内唯一）、union_id（同一开发者的应用间唯一）
+  feishuOpenId  String?    @unique @db.VarChar(64)
+  feishuUnionId String?    @unique @db.VarChar(64)
+  /// 企业微信 userid
+  wecomUserId   String?    @unique @db.VarChar(64)
+  /// 角色: ADMIN 管理员 / DEVELOPER 开发者(可提交代码应用) / MEMBER 成员
+  roles         Json?
+  /// 个人偏好, 如 { assistantOffApps: ['finance'] } 默认助手不并入哪些应用的工具
+  prefs         Json?
+  active        Boolean    @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
+  depts         UserDept[]
+  apiKeys       ApiKey[]
+  userApps      UserApp[]
+}
+
+model UserDept {
+  userId       Int
+  departmentId Int
+  isPrimary    Boolean    @default(false)
+  user         User       @relation(fields: [userId], references: [id])
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  @@id([userId, departmentId])
+}
+
+// ============ 应用与统一认证 ============
+
+/// 应用。type: SSO 接入统一认证 / LINK 纯链接 / NONE 不需要登录(AI 助手、轻应用)
+/// kind(市场里的类型): AGENT AI 助手 / LITE 轻应用 / EXTERNAL 外部应用 / HOSTED 托管应用(跑在本平台, managed=true)
+/// scope(发布范围): PRIVATE 仅自己 / SHARED 分享给指定人或部门(visibility) / MARKET 全公司市场(需审核)
+/// 内容按版本管理(AppVersion), liveVersionId 是当前生效的版本
+model App {
+  id                 Int          @id @default(autoincrement())
+  code               String       @unique @db.VarChar(50)
+  name               String       @db.VarChar(100)
+  /// 应用所属空间（发布者 / 登记者所在的空间）；extraSpaceIds 是管理员另外分享给的空间
+  spaceId            Int          @default(1)
+  extraSpaceIds      Json?
+  /// svg:<内置图标名> / 上传的图片(data URL, 前端压到 128px 以内) / 图片地址 / emoji
+  icon               String?      @db.Text
+  /// 图标配色（主色，如 #2563eb）；为空时用默认色板按名称取色
+  iconColor          String?      @db.VarChar(20)
+  description        String?      @db.VarChar(500)
+  category           String?      @db.VarChar(50)
+  type               String       @db.VarChar(20)
+  /// 应用首页; SSO 应用登录后跳回这里
+  url                String?      @db.VarChar(500)
+  /// SSO: 允许的回调地址前缀
+  redirectUris       Json?
+  clientSecretHash   String?      @db.VarChar(100)
+  /// 应用自带的 MCP 端点, 配置后其工具自动并入每个人的 AI 助手
+  mcpUrl             String?      @db.VarChar(500)
+  /// 可见范围: null=全员; { deptIds:[], userIds:[], roles:[] }
+  visibility         Json?
+  /// 新用户默认放到工作台
+  isDefault          Boolean      @default(false)
+  ownerId            Int?
+  /// ACTIVE / DISABLED
+  status             String       @default("ACTIVE") @db.VarChar(20)
+  sort               Int          @default(0)
+  // ---- 市场 ----
+  kind               String       @default("EXTERNAL") @db.VarChar(20)
+  publisherId        Int?
+  scope              String       @default("MARKET") @db.VarChar(20)
+  /// 已在市场上架(MARKET 且审核通过); 其余范围看 scope
+  listed             Boolean      @default(false)
+  intro              String?      @db.Text
+  screenshots        Json?
+  tags               Json?
+  liveVersionId      Int?
+  /// 声明的权限(用户授权确认页据此展示): SSO 应用 { scopes: ['contact','org'] }; 轻应用 { ai: true, tools: [...] }
+  permissions        Json?
+  /// 管理员安装/登记的可信应用: 不弹授权确认
+  trusted            Boolean      @default(false)
+  /// 管理员留给发布者的最近一条说明(如下架原因)
+  adminNote          String?      @db.VarChar(500)
+  /// 大模型每日 token 配额; null=用全局默认配额, 0=不限
+  llmDailyTokenLimit Int?
+  // ---- 平台托管 ----
+  managed            Boolean      @default(false)
+  /// 代码来源: git 地址 / 本机目录 / 模板
+  source             String?      @db.VarChar(500)
+  branch             String?      @db.VarChar(100)
+  /// yh agent 上报的运行状态 { state, health, version, memory, at }
+  runtime            Json?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  deletedAt          DateTime?
+  users              UserApp[]
+  versions           AppVersion[]
+  ratings            AppRating[]
+
+  @@index([publisherId])
+}
+
+/// 应用版本: 发布者每次提交一个版本; 分享/私有的 AI 助手和轻应用提交即生效, 上架市场和代码应用要审核
+model AppVersion {
+  id               Int       @id @default(autoincrement())
+  appId            Int
+  app              App       @relation(fields: [appId], references: [id])
+  version          String    @db.VarChar(40)
+  changelog        String?   @db.VarChar(1000)
+  /// 各类型的内容: AGENT { prompt, tools, modelId, starters, greeting } / LITE { html } / EXTERNAL { url, redirectUris, mcpUrl } / HOSTED { git, branch }
+  payload          Json
+  permissions      Json?
+  /// 申请的发布范围
+  targetScope      String    @db.VarChar(20)
+  targetVisibility Json?
+  /// DRAFT 草稿 / PENDING 待审核 / APPROVED 已生效 / REJECTED 已打回 / SUPERSEDED 已被新版本取代 / WITHDRAWN 已撤回
+  status           String    @default("DRAFT") @db.VarChar(20)
+  createdBy        Int
+  submittedAt      DateTime?
+  reviewedBy       Int?
+  reviewedAt       DateTime?
+  reviewNote       String?   @db.VarChar(1000)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([appId, id])
+  @@index([status])
+}
+
+/// 评分与评论: 每人每个应用一条
+model AppRating {
+  appId     Int
+  userId    Int
+  app       App      @relation(fields: [appId], references: [id])
+  stars     Int
+  comment   String?  @db.VarChar(1000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([appId, userId])
+}
+
+/// 举报: 用户发现应用有问题时提交, 管理员处理(下架 / 忽略)
+model AppReport {
+  id        Int       @id @default(autoincrement())
+  appId     Int
+  userId    Int
+  reason    String    @db.VarChar(1000)
+  /// OPEN / RESOLVED / DISMISSED
+  status    String    @default("OPEN") @db.VarChar(20)
+  handledBy Int?
+  handledAt DateTime?
+  note      String?   @db.VarChar(500)
+  createdAt DateTime  @default(now())
+
+  @@index([status])
+}
+
+/// 用户对应用的授权(统一登录要读哪些信息 / 轻应用要用哪些能力), 同意过就不再问; 应用申请的权限变多时重新问
+model AppGrant {
+  userId      Int
+  appId       Int
+  /// 同意时的权限快照
+  permissions Json
+  grantedAt   DateTime @default(now())
+
+  @@id([userId, appId])
+}
+
+/// 轻应用的数据: 应用 → 数据表(collection) → 记录; ownerId 为空表示共享记录(本应用所有用户可见)
+model AppData {
+  id         Int       @id @default(autoincrement())
+  appId      Int
+  /// 写入者所在空间：分享给多个空间的轻应用，各空间的数据互不可见
+  spaceId    Int       @default(1)
+  collection String    @db.VarChar(50)
+  ownerId    Int?
+  data       Json
+  createdBy  Int
+  updatedBy  Int?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  @@index([appId, collection, id])
+  @@index([appId, ownerId])
+}
+
+/// 用户工作台上放了哪些应用
+model UserApp {
+  userId    Int
+  appId     Int
+  sort      Int      @default(0)
+  /// 个人对这个应用的设置
+  config    Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  app       App      @relation(fields: [appId], references: [id])
+
+  @@id([userId, appId])
+}
+
+/// SSO 授权码(一次性, 5 分钟)
+model SsoCode {
+  code                String    @id @db.VarChar(64)
+  appId               Int
+  userId              Int
+  redirectUri         String    @db.VarChar(500)
+  /// 标准 OIDC 客户端带来的参数（平台自己的 SDK 不带，均为空）
+  scope               String?   @db.VarChar(500)
+  nonce               String?   @db.VarChar(255)
+  codeChallenge       String?   @db.VarChar(128)
+  codeChallengeMethod String?   @db.VarChar(10)
+  expiresAt           DateTime
+  usedAt              DateTime?
+  createdAt           DateTime  @default(now())
+}
+
+/// 个人 API Key(给 Claude / Cursor 等外部智能体通过 MCP 以本人身份访问)
+model ApiKey {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id])
+  name       String    @db.VarChar(100)
+  prefix     String    @db.VarChar(20)
+  keyHash    String    @unique @db.VarChar(100)
+  lastUsedAt DateTime?
+  /// 最近用这个 Key 接入的 Agent（MCP initialize 里的 clientInfo，如 claude-code 1.0.0）
+  agentName  String?   @db.VarChar(100)
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+}
+
+/// 应用使用事件。WORKBENCH: 控制台记录(打开应用、统一认证); APP: 应用自己上报
+model AppUsageEvent {
+  id        Int      @id @default(autoincrement())
+  appId     Int
+  userId    Int
+  action    String   @db.VarChar(50)
+  detail    Json?
+  source    String   @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  @@index([appId, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// 应用通过平台开放接口调用大模型的用量记录(/api/open/llm/chat/completions)
+model LlmUsageEvent {
+  id               Int      @id @default(autoincrement())
+  appId            Int
+  /// 请求带了用户 access_token 时按人记录, 否则为空
+  userId           Int?
+  model            String   @db.VarChar(100)
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  latencyMs        Int      @default(0)
+  /// OK / ERROR
+  status           String   @default("OK") @db.VarChar(20)
+  createdAt        DateTime @default(now())
+
+  @@index([appId, createdAt])
+  @@index([userId, createdAt])
+  @@index([model, createdAt])
+}
+
+// ============ 平台运维 ============
+
+/// 控制台发起的运维操作, 由宿主机上的 yh agent 领取执行(控制台容器不碰 Docker)
+/// kind: INSTALL 安装 / DEPLOY 重新发布 / START 启动 / STOP 停用 / RESTART 重启 / REMOVE 移除 / LOGS 取日志
+model PlatformOp {
+  id          Int       @id @default(autoincrement())
+  kind        String    @db.VarChar(20)
+  appCode     String    @db.VarChar(50)
+  params      Json?
+  /// PENDING / RUNNING / SUCCESS / FAILED
+  status      String    @default("PENDING") @db.VarChar(20)
+  log         String?   @db.MediumText
+  requestedBy Int?
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  finishedAt  DateTime?
+
+  @@index([status, id])
+  @@index([appCode, id])
+}
+
+/// 管理员在控制台上传的平台更新包(不能联网的机器): yh agent 取走安装, 只留最近几个
+model PlatformPackage {
+  id         Int      @id @default(autoincrement())
+  version    String   @db.VarChar(20)
+  filename   String   @db.VarChar(200)
+  size       Int
+  sha256     String   @db.VarChar(64)
+  /// 发布方的签名(base64); 机器上有 platform/release.pub 时由 yh 校验
+  sig        String?  @db.Text
+  data       Bytes    @db.LongBlob
+  uploadedBy Int?
+  createdAt  DateTime @default(now())
+}
+
+/// 发布记录(yh 每次发布后上报): 成功 / 回滚 / 中止
+model DeployRecord {
+  id        Int      @id @default(autoincrement())
+  appCode   String   @db.VarChar(50)
+  result    String   @db.VarChar(20)
+  version   String?  @db.VarChar(40)
+  author    String?  @db.VarChar(100)
+  subject   String?  @db.VarChar(500)
+  /// 自动 / 手动 / 控制台
+  trigger   String?  @db.VarChar(20)
+  createdAt DateTime @default(now())
+
+  @@index([appCode, id])
+}
+
+// ============ AI 与模型 ============
+
+/// 大模型配置。用户对话时可在「允许选择」的模型里挑一个
+/// provider = OPENHEX 时表示一个 OpenHex 智能体: model 填 Agent ID, extra.mcpConnector 填连接器 slug
+model LlmConfig {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(100)
+  description String?   @db.VarChar(300)
+  /// OPENAI_COMPAT(通义/DeepSeek/Kimi/智谱等) / ANTHROPIC / OPENHEX
+  provider    String    @db.VarChar(30)
+  /// CHAT=对话模型(助手/应用用) / EMBEDDING=向量模型(知识库用)
+  kind        String    @default("CHAT") @db.VarChar(12)
+  baseUrl     String?   @db.VarChar(300)
+  model       String    @db.VarChar(100)
+  /// 加密存储(v1. 前缀), 接口只返回打码
+  apiKey      String    @db.Text
+  maxTokens   Int       @default(4096)
+  extra       Json?
+  isDefault   Boolean   @default(false)
+  enabled     Boolean   @default(true)
+  selectable  Boolean   @default(true)
+  /// 限定角色可用, 空=所有人
+  roles       Json?
+  sort        Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+}
+
+model AgentConversation {
+  id        Int            @id @default(autoincrement())
+  userId    Int
+  title     String         @db.VarChar(200)
+  openhexId String?        @db.VarChar(100)
+  modelId   Int?
+  /// 用哪个 AI 助手应用聊的(空 = 默认助手); versionId 只在发布者/审核人试聊草稿时有
+  appId     Int?
+  versionId Int?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  deletedAt DateTime?
+  messages  AgentMessage[]
+
+  @@index([userId])
+}
+
+/// 对话消息。role: user / assistant / tool / event(确认卡片)
+model AgentMessage {
+  id             Int               @id @default(autoincrement())
+  conversationId Int
+  conversation   AgentConversation @relation(fields: [conversationId], references: [id])
+  role           String            @db.VarChar(20)
+  content        Json
+  createdAt      DateTime          @default(now())
+
+  @@index([conversationId])
+}
+
+/// 需要用户确认的 AI 写操作
+model PendingAction {
+  id             Int       @id @default(autoincrement())
+  conversationId Int
+  userId         Int
+  toolName       String    @db.VarChar(100)
+  args           Json
+  summary        String    @db.VarChar(1000)
+  /// PENDING / RUNNING / CONFIRMED / CANCELLED / FAILED / EXPIRED
+  status         String    @default("PENDING") @db.VarChar(20)
+  result         Json?
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+  decidedAt      DateTime?
+}
+
+// ============ 设置与审计 ============
+
+/// 系统设置: key 为分组(general / login / dingtalk / assistant), value 为该组 JSON; 密码项加密存 secretEnc
+model SystemSetting {
+  key       String   @id @db.VarChar(50)
+  value     Json
+  secretEnc String?  @db.Text
+  updatedBy Int?
+  updatedAt DateTime @updatedAt
+}
+
+/// 审计日志: 谁、通过什么渠道(WEB/AI/MCP/APP/SYSTEM)、做了什么
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    Int?
+  via        String   @db.VarChar(20)
+  action     String   @db.VarChar(100)
+  entityType String?  @db.VarChar(50)
+  entityId   String?  @db.VarChar(64)
+  detail     Json?
+  ip         String?  @db.VarChar(64)
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+}
+
+// ============ 平台级知识库(RAG) ============
+
+model KnowledgeBase {
+  id          Int          @id @default(autoincrement())
+  name        String       @db.VarChar(100)
+  description String?      @db.VarChar(500)
+  /// 所属空间：只有这个空间的人能看到（管理员都能看到）
+  spaceId     Int          @default(1)
+  /// ALL=全员可见 / DEPT=deptIds 里的部门(含成员)可见 / ADMIN=仅管理员
+  scope       String       @default("ALL") @db.VarChar(12)
+  deptIds     Json?
+  enabled     Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  documents   KbDocument[]
+}
+
+model KbDocument {
+  id         Int           @id @default(autoincrement())
+  kbId       Int
+  name       String        @db.VarChar(200)
+  /// PDF / DOCX / TXT / MD
+  fileType   String        @db.VarChar(10)
+  /// 字节数
+  size       Int           @default(0)
+  /// 原始文件
+  content    Bytes
+  /// PENDING / PROCESSING / READY / FAILED
+  status     String        @default("PENDING") @db.VarChar(12)
+  error      String?       @db.VarChar(500)
+  chunkCount Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  kb         KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  chunks     KbChunk[]
+
+  @@index([kbId])
+  @@index([kbId, status])
+}
+
+model KbChunk {
+  id         Int        @id @default(autoincrement())
+  documentId Int
+  kbId       Int
+  ord        Int        @default(0)
+  content    String     @db.Text
+  /// embedding(JSON 存浮点数组)
+  embedding  Json
+  createdAt  DateTime   @default(now())
+  document   KbDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([kbId])
+}
+
+// ============ 资料中心（REQ-05）：模板、品牌 VI、设计组件等素材，人能看能下载，Agent 能按类别取用 ============
+
+/// 一份资料（如「公司 PPT 模板」「品牌 VI」）。属于一个空间；有责任人；每次更新出一个版本（一整套文件）
+model Asset {
+  id              Int       @id @default(autoincrement())
+  spaceId         Int       @default(1)
+  /// TEMPLATE 模板 / BRAND 品牌 VI / COMPONENT 设计组件 / OTHER 其他
+  category        String    @db.VarChar(20)
+  name            String    @db.VarChar(100)
+  description     String?   @db.VarChar(1000)
+  tags            Json?
+  /// 责任人：能出新版本（管理员也能）
+  ownerId         Int?
+  /// 结构化规范（主要给品牌 VI）：{ colors: [{ name, hex, usage }], fonts: [{ name, usage, fallback }], rules: [], voice }
+  spec            Json?
+  /// 最新版本号（0 = 还没有文件）
+  version         Int       @default(0)
+  /// 配套的 Skill（资料是素材，Skill 是做法）
+  relatedSkillIds Json?
+  createdBy       Int
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@index([spaceId, category])
+}
+
+model AssetVersion {
+  id        Int      @id @default(autoincrement())
+  assetId   Int
+  version   Int
+  changelog String?  @db.VarChar(1000)
+  createdBy Int
+  createdAt DateTime @default(now())
+
+  @@unique([assetId, version])
+}
+
+/// 某个版本里的一个文件；内容按 sha256 存在 AssetBlob，新版本没改的文件不重复存
+model AssetFile {
+  id      Int    @id @default(autoincrement())
+  assetId Int
+  version Int
+  name    String @db.VarChar(200)
+  mime    String @db.VarChar(100)
+  size    Int
+  sha256  String @db.VarChar(64)
+
+  @@index([assetId, version])
+}
+
+model AssetBlob {
+  sha256    String   @id @db.VarChar(64)
+  size      Int
+  content   Bytes
+  createdAt DateTime @default(now())
+}
+
+/// 谁用过哪份资料的哪个版本（下载或 Agent 取用时记），有新版本时提示
+model AssetUse {
+  userId  Int
+  assetId Int
+  version Int
+  usedAt  DateTime @default(now())
+
+  @@id([userId, assetId])
+}

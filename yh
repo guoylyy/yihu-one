@@ -1,0 +1,1654 @@
+#!/bin/bash
+# yh —— 以虎 One 平台命令行
+# 一台机器（Mac mini / Linux 服务器）跑整个平台：控制台 + 各应用，每个应用一个容器，Caddy 按路径分发，可选 frp 隧道对外
+# 平台跑起来默认就是控制台（配置模型、登录、用户，插拔应用），应用都挂在 <访问地址>/apps/<code>/ 下；配了 APPS_URL 时在 <应用域名>/<code>/
+# 手册：docs/部署手册.md
+#
+#   yh init --url https://<域名>       首次安装（生产）：生成配置和密钥，启动平台和控制台，打印管理员初始密码
+#   yh init --test [--lan]              测试模式：http://localhost:18080（--lan 用本机内网 IP），打开开发登录，不连隧道，不发通知
+#   yh start                            启动平台、控制台和所有应用（开机自启用）
+#   yh new <code> --from node|python [--name 名称]   从模板新建应用
+#   yh add <code> --git <仓库地址> [--branch 分支]    接入已有应用（Git 仓库）
+#   yh add <code> --path <本机目录>                   接入已有应用（本机目录，会复制一份）
+#   yh up <code>                        上线 / 更新配置：建库 → 登记到控制台 → 构建 → 路由 → 健康检查
+#   yh up console                       重新构建并重启控制台
+#   yh update <code>                    拉最新代码后重新上线（git 应用：备份 → 上线 → 失败自动回滚 → 通知）
+#   yh upgrade [--check]                平台自身升级（用更新包安装的机器）：查新版本 / 下载并升级，先备份，失败自动回滚
+#   yh upgrade --package <更新包>       不能联网时：用拷进来的更新包升级
+#   yh version                          平台版本（x.y.z，0.x 是 Beta；见 docs/版本管理.md）
+#   yh down <code>                      停用（代码、数据保留，再 up 即恢复）
+#   yh remove <code> [--yes]            移除（先备份代码、数据和数据库，再删除）
+#   yh restart <code>                   重启
+#   yh logs <code> [-f]                 看日志（code 可以是 console / caddy / mysql）
+#   yh status                           所有应用的状态
+#   yh agent                            常驻：执行控制台里点的安装/发布/停用等操作，上报状态，跟踪 release 分支自动发布
+#   yh watch                            检查一轮各应用的发布分支（agent 会定时做，一般不用手动）
+#   yh public-check                     从公网访问一次平台入口和应用域名（agent 每 5 分钟自动查，不通时发通知）
+#   yh history [code]                   发布记录
+#   yh passwd <账号>                    重设某个用户的登录密码（忘记管理员密码时用）
+#   yh doctor                           全面自检（容器、控制台、隧道、公网访问）
+#   yh backup                           备份所有数据库和数据目录
+#   yh restore <code> <备份.sql.gz>     用备份恢复某个应用的数据库（code 为 console 时恢复控制台）
+#   yh db <code>                        进入某个应用的数据库命令行
+#   yh notify-test                      给通知群机器人发一条测试消息
+#   yh autostart                        安装开机自启 + 常驻 agent + 每晚 02:30 备份（macOS launchd / Linux systemd）
+#   yh destroy                          清空本机平台（测试转生产前用；代码仓库不受影响）
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$ROOT/yh.env"
+APPS="$ROOT/apps"
+PLATFORM="$ROOT/platform"
+CONSOLE_PORT=3105
+RESERVED_CODES=" api dev sdk apps login admin me sso assets health console assistant auth caddy mysql redis frpc platform "
+
+nocolor() { LC_ALL=C sed $'s/\033\\[[0-9;]*m//g'; }
+red() { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+gray() { printf '\033[90m%s\033[0m\n' "$*"; }
+step() { printf '\033[36m▶ %s\033[0m\n' "$*"; }
+die() { red "✗ $*"; exit 1; }
+
+# ---------------------------------------------------------------- 配置
+load_env() {
+  [ -f "$ENV_FILE" ] || die "还没有 yh.env，先执行 yh init"
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+  LOCAL_HTTP_PORT="${LOCAL_HTTP_PORT:-18080}"
+  PUBLIC_URL="${PUBLIC_URL%/}"
+  APPS_URL="${APPS_URL:-}"; APPS_URL="${APPS_URL%/}"
+  LOCAL="http://127.0.0.1:$LOCAL_HTTP_PORT"
+}
+
+is_test() { [ "${PLATFORM_MODE:-production}" = "test" ]; }
+public_host() { echo "$PUBLIC_URL" | sed -E 's#^[a-z]+://##; s#[:/].*$##'; }
+# 应用独立域名（yh.env 的 APPS_URL，如 https://apps.one.example.com）：配了时代码应用只在这个域名下（<APPS_URL>/apps/<code>/），
+# 和控制台不同源，应用页面里的脚本拿不到控制台的登录凭证；没配时和以前一样挂在 <PUBLIC_URL>/apps/<code>/ 下。
+# 路径前缀两种模式都是 /apps/<code>：各应用自带的 SDK 只认这个形状的前缀，换域名不用改任何应用
+apps_mode() { [ -n "${APPS_URL:-}" ]; }
+apps_host() { echo "$APPS_URL" | sed -E 's#^[a-z]+://##; s#[:/].*$##'; }
+app_base() { echo "/apps/$1"; }
+app_url() { if apps_mode; then echo "$APPS_URL/apps/$1"; else echo "$PUBLIC_URL/apps/$1"; fi; }
+# 应用的路由片段：应用域名模式是 <code>.app（只被应用域名的站点引入），否则 <code>.caddy（挂在控制台域名下）
+app_route_file() { if apps_mode; then echo "$PLATFORM/caddy/apps/$1.app"; else echo "$PLATFORM/caddy/apps/$1.caddy"; fi; }
+rm_app_routes() { rm -f "$PLATFORM/caddy/apps/$1.caddy" "$PLATFORM/caddy/apps/$1.app"; }
+# 经本机 Caddy 访问应用，打印 HTTP 状态码（应用域名模式要带上 Host）。app_http <code> <路径>
+app_http() {
+  if apps_mode; then curl -s -o /dev/null --max-time 5 -w '%{http_code}' -H "Host: $(apps_host)" "$LOCAL$(app_base "$1")$2"
+  else curl -s -o /dev/null --max-time 5 -w '%{http_code}' "$LOCAL$(app_base "$1")$2"; fi
+}
+
+# 读写 KEY=VALUE 文件（保留其他行）
+env_get() { [ -f "$1" ] && grep -E "^$2=" "$1" | tail -1 | cut -d= -f2- || true; }
+env_set() {
+  local f="$1" k="$2" v="$3"
+  touch "$f"; chmod 600 "$f"
+  if grep -qE "^$k=" "$f"; then
+    grep -vE "^$k=" "$f" > "$f.tmp"; mv "$f.tmp" "$f"
+  fi
+  printf '%s=%s\n' "$k" "$v" >> "$f"
+  chmod 600 "$f"
+}
+rand() { openssl rand -hex "${1:-24}"; }
+# 好念的初始密码：8 个字母 + 4 个数字
+rand_password() { printf '%s%s' "$(LC_ALL=C tr -dc 'a-km-zA-HJ-NP-Z' < /dev/urandom | head -c 8)" "$(LC_ALL=C tr -dc '2-9' < /dev/urandom | head -c 4)"; }
+
+need() { command -v "$1" >/dev/null 2>&1 || die "缺少 $1：$2"; }
+
+compose_platform() {
+  local profiles=""
+  [ -n "${FRP_TOKEN:-}" ] && [ -n "${FRP_SERVER_ADDR:-}" ] && ! is_test && profiles="--profile tunnel"
+  # shellcheck disable=SC2086
+  docker compose --env-file "$ENV_FILE" -f "$PLATFORM/compose.yml" $profiles "$@"
+}
+
+manifest() { # manifest <code> → 清单路径（apps/<code>/yh-app.json 优先，其次源码里的）
+  if [ -f "$APPS/$1/yh-app.json" ]; then echo "$APPS/$1/yh-app.json"
+  elif [ -f "$APPS/$1/src/yh-app.json" ]; then echo "$APPS/$1/src/yh-app.json"
+  else echo ""; fi
+}
+mf() { jq -r "$2 // empty" "$1"; } # mf <清单> <jq 路径>
+
+mysql_root() { docker exec -i yh-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$@" 2>/dev/null; }
+
+wait_mysql() {
+  # 不用 mysqladmin ping：首次启动时镜像先起一个不监听网络的临时实例再重启，ping 会提前返回成功；走 TCP 真正查询一次才算就绪
+  local i=0
+  until docker exec yh-mysql mysql -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1; do
+    i=$((i + 1)); [ $i -gt 120 ] && die "MySQL 120 秒内没起来：docker logs yh-mysql"
+    sleep 1
+  done
+}
+
+# 建库建用户（幂等）。ensure_db <库名> <用户> <密码>
+ensure_db() {
+  mysql_root -e "CREATE DATABASE IF NOT EXISTS \`$1\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS '$2'@'%' IDENTIFIED BY '$3';
+    ALTER USER '$2'@'%' IDENTIFIED BY '$3';
+    GRANT ALL PRIVILEGES ON \`$1\`.* TO '$2'@'%'; FLUSH PRIVILEGES;"
+}
+
+# 每个应用一个独立网络 yh-app-<code>：只有平台组件（Caddy、控制台、MySQL、Redis）加入，应用之间互相访问不到
+app_net() { echo "yh-app-$1"; }
+ensure_app_net() { # ensure_app_net <code>
+  local n c members; n="$(app_net "$1")"
+  docker network inspect "$n" >/dev/null 2>&1 || docker network create "$n" >/dev/null || die "建网络 $n 失败"
+  members="$(docker network inspect "$n" -f '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null)"
+  for c in yh-caddy yh-console yh-mysql yh-redis; do
+    case " $members " in *" $c "*) ;; *) docker network connect "$n" "$c" >/dev/null 2>&1;; esac
+  done
+}
+# 平台组件重建后会掉出应用网络：重新接上所有应用网络
+connect_app_networks() { local n; for n in $(docker network ls --format '{{.Name}}' | grep '^yh-app-'); do ensure_app_net "${n#yh-app-}"; done; }
+drop_app_net() { # drop_app_net <code>
+  local n c; n="$(app_net "$1")"
+  docker network inspect "$n" >/dev/null 2>&1 || return 0
+  for c in $(docker network inspect "$n" -f '{{range .Containers}}{{.Name}} {{end}}'); do docker network disconnect -f "$n" "$c" >/dev/null 2>&1; done
+  docker network rm "$n" >/dev/null 2>&1
+}
+
+caddy_reload() { docker exec yh-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || die "Caddy 重载失败：docker logs yh-caddy"; }
+
+# 调控制台的平台接口（经本机 Caddy，不绕隧道）。platform_api <方法> <路径> [curl 参数…]
+platform_api() {
+  local m="$1" p="$2"; shift 2
+  curl -s --max-time 15 -X "$m" -H "Authorization: Bearer $PLATFORM_TOKEN" "$LOCAL$p" "$@"
+}
+console_ok() { platform_api GET /api/platform/ping | grep -q '"ok":true'; }
+
+# 额外隧道（yh.env 的 EXTRA_TUNNELS）：内网里不归平台管的独立服务，经同一条隧道直通一个自己的域名。
+# 和托管应用（容器跑在平台上、挂在 /apps/<code>/ 下）是两条不同的路：这里平台只管转发，不管登录、不管进程
+# 格式：<对外域名>=<frpc 容器里访问得到的地址>:<端口>，多条用英文逗号分隔，如 notes.example.com=host.docker.internal:3005
+# 逐行输出「域名 地址 端口」；写错的条目报出来并跳过（返回 1），不影响平台和其余条目
+extra_tunnels() {
+  local list="${EXTRA_TUNNELS:-}" item domain target host port bad=0 seen platform
+  [ -n "$list" ] || return 0
+  platform="$(public_host)"; seen=" $platform "
+  apps_mode && seen="$seen$(apps_host) "
+  local IFS=','
+  for item in $list; do
+    item="$(echo "$item" | tr -d '[:space:]')"
+    [ -n "$item" ] || continue
+    domain="$(echo "${item%%=*}" | tr 'A-Z' 'a-z')"; target="${item#*=}"
+    host="${target%:*}"; port="${target##*:}"
+    if [ "${item#*=}" = "$item" ] || [ -z "$target" ] || [ -z "$domain" ]; then
+      red "✗ EXTRA_TUNNELS 里的「${item}」缺少 =，应为 <域名>=<地址>:<端口>，已跳过" >&2; bad=1; continue
+    fi
+    if ! echo "$domain" | grep -qE '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'; then
+      red "✗ EXTRA_TUNNELS 里的域名「${domain}」不合法（只写域名，不带 http:// 和路径），已跳过" >&2; bad=1; continue
+    fi
+    if [ "$host" = "$target" ] || ! echo "$host" | grep -qE '^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$' \
+      || ! echo "$port" | grep -qE '^[0-9]{1,5}$' || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+      red "✗ EXTRA_TUNNELS 里 ${domain} 的目标「${target}」不对，应为 <地址>:<端口>（如 host.docker.internal:3005），已跳过" >&2; bad=1; continue
+    fi
+    case "$seen" in *" $domain "*)
+      if [ "$domain" = "$platform" ] || { apps_mode && [ "$domain" = "$(apps_host)" ]; }; then red "✗ EXTRA_TUNNELS 里的 ${domain} 是平台自己的域名，不能再转给别的服务，已跳过" >&2
+      else red "✗ EXTRA_TUNNELS 里 ${domain} 写了两次，只用第一条" >&2; fi
+      bad=1; continue;;
+    esac
+    seen="$seen$domain "
+    echo "$domain $host $port"
+  done
+  return $bad
+}
+extra_tunnel_name() { echo "yh-extra-$(echo "$1" | tr '.' '-')"; } # 隧道条目的名字：由域名派生，调换顺序不会变
+
+# 生成隧道客户端配置。内容有变化时置 FRPC_CHANGED=1（frpc 只在启动时读配置，cmd_start_platform 据此重启它）
+FRPC_CHANGED=""
+render_frpc() {
+  [ -n "${FRP_TOKEN:-}" ] && [ -n "${FRP_SERVER_ADDR:-}" ] || return 0
+  local f="$PLATFORM/frpc.toml" tmp="$PLATFORM/.frpc.toml.new" d h p
+  {
+    cat <<EOF
+# yh 生成，勿手改（改 yh.env 后执行 yh start）
+serverAddr = "${FRP_SERVER_ADDR}"
+serverPort = ${FRP_SERVER_PORT:-7000}
+auth.method = "token"
+auth.token = "${FRP_TOKEN}"
+loginFailExit = false
+log.to = "console"
+log.level = "info"
+
+[[proxies]]
+name = "${FRP_PROXY_NAME:-yh-platform}"
+type = "http"
+localIP = "yh-caddy"
+localPort = 80
+customDomains = [$(if apps_mode; then printf '"%s", "%s"' "$(public_host)" "$(apps_host)"; else printf '"%s"' "$(public_host)"; fi)]
+EOF
+    extra_tunnels | while read -r d h p; do
+      printf '\n# 额外隧道（yh.env 的 EXTRA_TUNNELS）：%s → %s:%s\n[[proxies]]\nname = "%s"\ntype = "http"\nlocalIP = "%s"\nlocalPort = %s\ncustomDomains = ["%s"]\n' \
+        "$d" "$h" "$p" "$(extra_tunnel_name "$d")" "$h" "$p" "$d"
+    done
+  } > "$tmp"
+  if ! cmp -s "$tmp" "$f"; then
+    cat "$tmp" > "$f" # 原地写：frpc 容器挂的是这个文件本身，换文件它看不到
+    FRPC_CHANGED=1
+  fi
+  rm -f "$tmp"
+  chmod 600 "$f"
+}
+
+# 应用域名的 Caddy 配置（按 APPS_URL 生成；没配时删掉，回到 /apps/<code>/ 路径模式）
+check_apps_url() {
+  apps_mode || return 0
+  echo "$APPS_URL" | grep -qE '^https?://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' \
+    || die "yh.env 的 APPS_URL 格式不对：应为 https://<域名>，不带路径（如 https://apps.one.example.com）"
+  [ "$(apps_host)" != "$(public_host)" ] || die "APPS_URL 不能和 PUBLIC_URL 同一个域名：分开才能让应用拿不到控制台的登录凭证"
+}
+render_caddy_site() {
+  local d="$PLATFORM/caddy/apps"
+  mkdir -p "$d"
+  if apps_mode; then
+    cat > "$d/apps.site" <<EOF
+# yh 生成，勿手改（改 yh.env 的 APPS_URL 后执行 yh start）
+# 应用域名：只转发各应用（/apps/<code>/），不提供控制台页面和接口——应用和控制台不同源，这是隔离成立的关键
+http://$(apps_host) {
+	encode gzip
+	header X-Yh-Apps 1
+	import /etc/caddy/apps/*.app
+	handle {
+		header Content-Type "text/html; charset=utf-8"
+		respond "<meta charset='utf-8'><title>应用不存在</title><div style='font:15px/1.7 system-ui,sans-serif;max-width:480px;margin:18vh auto;padding:0 20px;color:#374151;text-align:center'><h2>这个应用还没上线，或已停用</h2><p><a href='$PUBLIC_URL/' style='color:#2563eb'>回到工作台</a></p></div>" 404
+	}
+}
+EOF
+    cat > "$d/_apps-redirect.caddy" <<EOF
+# yh 生成：控制台域名下的老地址 /apps/<code>/… 跳到应用域名的同一路径（APPS_URL）
+handle /apps/* {
+	# 302 不用 301：浏览器会一直缓存 301，以后去掉或换了应用域名，用户还会被带去旧地址
+	redir $APPS_URL{uri} 302
+}
+EOF
+  else
+    rm -f "$d/apps.site" "$d/_apps-redirect.caddy"
+  fi
+}
+
+# 控制台的环境变量：每次启动按 yh.env 重新生成（密钥保存在 yh.env 里，不会变）
+render_console_env() {
+  local f="$PLATFORM/console.env"
+  {
+    echo "# yh 生成，勿手改（改 yh.env 后执行 yh start 或 yh up console）"
+    echo "DATABASE_URL=mysql://console:${CONSOLE_DB_PASSWORD}@yh-mysql:3306/yh_console"
+    echo "JWT_SECRET=${CONSOLE_JWT_SECRET}"
+    echo "SECRET_KEY=${CONSOLE_SECRET_KEY}"
+    echo "PLATFORM_TOKEN=${PLATFORM_TOKEN}"
+    echo "PUBLIC_URL=${PUBLIC_URL}"
+    echo "BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_INITIAL_PASSWORD:-}"
+    # 开发登录（选人即登录）只在测试模式打开；生产每次启动都强制关闭
+    if is_test; then echo "NODE_ENV=staging"; echo "DEV_LOGIN=true"; else echo "NODE_ENV=production"; echo "DEV_LOGIN=false"; fi
+    # 测试模式：yh.env 里的 YH_TEST_*（如把飞书 / 企业微信接口指到模拟服务）原样传给控制台；生产模式不传，控制台也不认
+    if is_test; then env | grep -E '^YH_TEST_[A-Z_]+=' || true; fi
+  } > "$f"
+  chmod 600 "$f"
+}
+
+wait_console() { # wait_console <秒>
+  local i=0
+  until console_ok; do
+    i=$((i + 2)); [ $i -gt "${1:-180}" ] && return 1
+    sleep 2
+  done
+}
+
+# ---------------------------------------------------------------- init / start
+cmd_init() {
+  local mode="production" lan="" url=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --test) mode="test"; shift;;
+      --lan) lan="1"; shift;;
+      --url) url="${2%/}"; shift 2;;
+      *) die "未知参数 $1（可用 --url <访问地址>、--test、--test --lan）";;
+    esac
+  done
+  step "检查依赖"
+  need docker "macOS 装 Colima：brew install colima docker docker-compose；Linux 装 Docker Engine（见手册第 2 节）"
+  docker info >/dev/null 2>&1 || die "Docker 没在运行（macOS：colima start）"
+  docker compose version >/dev/null 2>&1 || die "缺少 docker compose 插件"
+  need jq "brew install jq / apt install jq"; need git "xcode-select --install / apt install git"; need openssl "系统自带"; need curl "系统自带"
+  green "  依赖齐全"
+
+  step "生成配置"
+  if [ ! -f "$ENV_FILE" ]; then cp "$ROOT/yh.env.example" "$ENV_FILE"; chmod 600 "$ENV_FILE"; fi
+  local port; port="$(env_get "$ENV_FILE" LOCAL_HTTP_PORT)"; port="${port:-18080}"
+  if [ "$mode" = "test" ]; then
+    local ip="localhost" bind="127.0.0.1"
+    if [ -n "$lan" ]; then
+      ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
+      [ -n "$ip" ] || die "取不到本机内网 IP"
+      bind="0.0.0.0"
+    fi
+    env_set "$ENV_FILE" PLATFORM_MODE "test"
+    env_set "$ENV_FILE" PUBLIC_URL "http://$ip:$port"
+    env_set "$ENV_FILE" LOCAL_HTTP_BIND "$bind"
+  else
+    [ -n "$url" ] || url="$(env_get "$ENV_FILE" PUBLIC_URL)"
+    echo "$url" | grep -qE '^https?://[^/]+$' || die "生产模式要指定访问地址：yh init --url https://one.example.com（本机试用：yh init --test）"
+    env_set "$ENV_FILE" PLATFORM_MODE "production"
+    env_set "$ENV_FILE" PUBLIC_URL "$url"
+  fi
+  local k
+  for k in MYSQL_ROOT_PASSWORD CONSOLE_DB_PASSWORD; do [ -n "$(env_get "$ENV_FILE" $k)" ] || env_set "$ENV_FILE" $k "$(rand 16)"; done
+  for k in PLATFORM_TOKEN CONSOLE_JWT_SECRET CONSOLE_SECRET_KEY; do [ -n "$(env_get "$ENV_FILE" $k)" ] || env_set "$ENV_FILE" $k "$(rand 32)"; done
+  [ "$mode" = "test" ] || [ -n "$(env_get "$ENV_FILE" FRP_TOKEN)" ] || env_set "$ENV_FILE" FRP_TOKEN "$(rand 24)"
+  # 测试模式自动建 admin 并打印密码（本地试用方便）；生产模式交给浏览器初始化向导，不自动建号
+  if [ "$mode" = "test" ]; then
+    [ -n "$(env_get "$ENV_FILE" ADMIN_INITIAL_PASSWORD)" ] || env_set "$ENV_FILE" ADMIN_INITIAL_PASSWORD "$(rand_password)"
+  fi
+  load_env
+  green "  yh.env 就绪（密钥已生成，权限 600）"
+
+  cmd_start_platform --build
+  echo
+  green "✅ 以虎 One 已就绪（$(is_test && echo 测试模式 || echo 生产模式)）"
+  echo "   控制台：$PUBLIC_URL"
+  if is_test; then
+    echo "   管理员：账号 admin，初始密码 ${ADMIN_INITIAL_PASSWORD}（登录后在「个人中心」修改；忘了用 yh passwd admin）"
+    echo "   测试模式登录页还有「开发登录」，可直接选人"
+  elif [ -n "${ADMIN_INITIAL_PASSWORD:-}" ]; then
+    echo "   已设置初始管理员：账号 admin，初始密码 ${ADMIN_INITIAL_PASSWORD}（想要浏览器向导可在 yh.env 里删掉 ADMIN_INITIAL_PASSWORD）"
+  else
+    echo "   首次使用：打开 $PUBLIC_URL 在浏览器里完成初始化（设置管理员账号和站点信息）"
+  fi
+  if ! is_test; then
+    if [ -n "${FRP_SERVER_ADDR:-}" ]; then echo "   隧道令牌（云服务器安装 frps 时要用）：$FRP_TOKEN"
+    else gray "   没配隧道：本机 $LOCAL 可访问；公网访问见手册「云端入口」"; fi
+  fi
+  echo "   下一步：yh autostart（开机自启 + 常驻 agent，控制台里的插拔操作靠它执行）"
+}
+
+# 启动平台基础设施和控制台。--build：重新构建控制台镜像
+cmd_start_platform() {
+  load_env
+  local build="${1:-}"
+  step "启动平台（Caddy / MySQL / Redis$( [ -n "${FRP_TOKEN:-}" ] && [ -n "${FRP_SERVER_ADDR:-}" ] && ! is_test && echo ' / 隧道') ）"
+  docker network inspect yh-net >/dev/null 2>&1 || docker network create yh-net >/dev/null
+  mkdir -p "$PLATFORM/caddy/apps" "$ROOT/backups"
+  local frpc_was_running; frpc_was_running="$(docker ps -q --filter name=^yh-frpc$ --filter status=running 2>/dev/null)"
+  check_apps_url
+  render_frpc
+  render_caddy_site
+  if [ -n "${EXTRA_TUNNELS:-}" ] && { is_test || [ -z "${FRP_TOKEN:-}" ] || [ -z "${FRP_SERVER_ADDR:-}" ]; }; then
+    gray "  EXTRA_TUNNELS 没有生效：$(is_test && echo '测试模式不连隧道' || echo '还没配隧道（FRP_SERVER_ADDR / FRP_TOKEN）')"
+  fi
+  render_console_env
+  compose_platform up -d mysql redis caddy >/dev/null 2>&1 || { compose_platform up -d mysql redis caddy; die "平台启动失败"; }
+  # Caddyfile 被整个换掉过（git 更新、升级包、rsync 都是写新文件）时，容器里挂的还是原来那个文件：重建 Caddy 才能看到新的；
+  # 没换过就重载一次读新配置（如刚配了 APPS_URL）。重建后应用网络由下面的 connect_app_networks 接回
+  if [ "$(docker exec yh-caddy cat /etc/caddy/Caddyfile 2>/dev/null | cksum)" != "$(cksum < "$PLATFORM/Caddyfile")" ]; then
+    compose_platform up -d --force-recreate caddy >/dev/null 2>&1 || die "Caddy 重建失败：docker logs yh-caddy"
+    gray "  Caddyfile 有更新，已重建 Caddy"
+  else
+    docker exec yh-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
+  fi
+  wait_mysql
+  ensure_db yh_console console "$CONSOLE_DB_PASSWORD" || die "控制台建库失败"
+  green "  平台运行中"
+  step "启动控制台$( [ -n "$build" ] && echo '（构建镜像，首次约需几分钟）')"
+  if [ -n "$build" ] || ! docker image inspect yh-console:latest >/dev/null 2>&1; then
+    compose_platform build console 2>&1 | nocolor | grep -E "ERROR|error:" && die "控制台镜像构建失败：docker compose -f platform/compose.yml build console"
+  fi
+  compose_platform up -d >/dev/null 2>&1 || { compose_platform up -d; die "控制台启动失败"; }
+  wait_console 240 || die "控制台 4 分钟内没起来：yh logs console"
+  # 隧道配置变了（如改了 EXTRA_TUNNELS）：frpc 只在启动时读配置，重启它才生效；刚创建的容器读到的已经是新配置，不用重启
+  if [ -n "$FRPC_CHANGED" ] && [ -n "$frpc_was_running" ]; then
+    docker restart yh-frpc >/dev/null 2>&1 && green "  隧道配置有变化，已重启隧道客户端" || red "  隧道配置有变化，但重启隧道客户端失败：docker restart yh-frpc"
+  fi
+  connect_app_networks
+  report_platform
+  green "  控制台正常：$PUBLIC_URL"
+}
+
+cmd_start() {
+  cmd_start_platform
+  step "启动应用"
+  local d c
+  for d in "$APPS"/*/; do
+    [ -d "$d" ] || continue
+    c="$(basename "$d")"
+    [ -f "$APPS/$c/compose.yml" ] || continue
+    [ -f "$APPS/$c/.stopped" ] && { gray "  ${c}（已停用）"; continue; }
+    if docker compose -f "$APPS/$c/compose.yml" up -d >/dev/null 2>&1; then green "  $c"; else red "  $c 启动失败：yh logs $c"; fi
+  done
+  # 配了 / 去掉了 APPS_URL：应用的地址、统一登录回调要换、路由要挂到另一个站点，逐个重新上线（子 shell：失败不带走 yh start）
+  for d in "$APPS"/*/; do
+    [ -d "$d" ] || continue
+    c="$(basename "$d")"
+    [ -f "$APPS/$c/compose.yml" ] && [ ! -f "$APPS/$c/.stopped" ] || continue
+    [ ! -f "$(app_route_file "$c")" ] && { [ -f "$PLATFORM/caddy/apps/$c.caddy" ] || [ -f "$PLATFORM/caddy/apps/$c.app" ]; } || continue
+    if ( cmd_up "$c" ) >/dev/null 2>&1; then green "  ${c}：访问地址已换成 $(app_url "$c")/"; else red "  ${c}：换访问地址失败，执行 yh up $c 看原因"; fi
+  done
+}
+
+# ---------------------------------------------------------------- new / add
+cmd_new() {
+  local code="${1:-}" from="" name=""
+  shift || true
+  while [ $# -gt 0 ]; do
+    case "$1" in --from) from="$2"; shift 2;; --name) name="$2"; shift 2;; *) die "未知参数 $1";; esac
+  done
+  valid_code "$code"
+  [ -n "$from" ] && [ -d "$ROOT/templates/$from" ] || die "--from 只能是：$(cd "$ROOT/templates" && ls -d */ | tr -d / | tr '\n' ' ')"
+  [ -e "$APPS/$code" ] && die "apps/$code 已存在"
+  name="${name:-$code}"
+  mkdir -p "$APPS/$code/src"
+  cp -R "$ROOT/templates/$from/." "$APPS/$code/src/"
+  # 替换占位符（macOS 与 GNU sed 的 -i 写法不同，用临时文件）
+  local f
+  for f in $(grep -rlE "__CODE__|__NAME__" "$APPS/$code/src"); do
+    sed -e "s/__CODE__/$code/g" -e "s/__NAME__/$name/g" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
+  echo "path:template-$from" > "$APPS/$code/.source"
+  green "✅ 已生成 apps/$code/src（$from 模板）"
+  echo "   改代码后执行 yh up ${code}；清单在 apps/$code/src/yh-app.json"
+}
+
+cmd_add() {
+  local code="${1:-}" git="" branch="" path=""
+  shift || true
+  while [ $# -gt 0 ]; do
+    case "$1" in --git) git="$2"; shift 2;; --branch) branch="$2"; shift 2;; --path) path="$2"; shift 2;; *) die "未知参数 $1";; esac
+  done
+  valid_code "$code"
+  [ -e "$APPS/$code/src" ] && die "apps/$code/src 已存在；更新代码用 yh update $code"
+  mkdir -p "$APPS/$code"
+  if [ -n "$git" ]; then
+    step "克隆 $git"
+    export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+    git clone ${branch:+--branch "$branch"} --depth 1 --no-single-branch "$git" "$APPS/$code/src" || { rm -rf "$APPS/$code"; die "克隆失败（地址、分支或权限不对？私有仓库要先给这台机器配部署公钥）"; }
+    echo "git:$git" > "$APPS/$code/.source"
+  elif [ -n "$path" ]; then
+    [ -d "$path" ] || die "目录不存在：$path"
+    step "复制 $path"
+    sync_path "$path" "$APPS/$code/src"
+    echo "path:$(cd "$path" && pwd)" > "$APPS/$code/.source"
+  else
+    die "用 --git <仓库地址> 或 --path <目录> 指定代码来源"
+  fi
+  local m; m="$(manifest "$code")"
+  local why=""
+  if [ -z "$m" ]; then why="代码里没有 yh-app.json（应用清单，模板见 templates/node/yh-app.json）"
+  elif ! jq empty "$m" 2>/dev/null; then why="yh-app.json 不是合法 JSON"
+  elif [ "$(mf "$m" .code)" != "$code" ]; then why="清单里的 code（$(mf "$m" .code)）和这次填的 $code 不一致"
+  elif [ ! -f "$APPS/$code/src/Dockerfile" ] && [ -z "$(mf "$m" .image)" ]; then why="代码里没有 Dockerfile"
+  fi
+  if [ -n "$why" ]; then rm -rf "$APPS/$code"; die "$why"; fi
+  # git 应用：切到清单里声明的发布分支（没有就用仓库默认分支）
+  if [ -n "$git" ] && [ -z "$branch" ]; then
+    local want; want="$(mf "$m" .deploy.branch)"
+    if [ -n "$want" ] && [ "$want" != "$(git -C "$APPS/$code/src" rev-parse --abbrev-ref HEAD)" ]; then
+      if git -C "$APPS/$code/src" rev-parse -q --verify "origin/$want" >/dev/null; then
+        git -C "$APPS/$code/src" checkout -q -B "$want" "origin/$want" && gray "  已切到发布分支 $want"
+      else
+        gray "  清单声明的发布分支 $want 还不存在，先用默认分支；推送 $want 后自动发布"
+      fi
+    fi
+  fi
+  green "✅ 已接入 apps/${code}，执行 yh up $code 上线"
+}
+
+sync_path() {
+  rsync -a --delete --exclude node_modules --exclude .git --exclude __pycache__ \
+    --exclude .env --exclude '.env.*' --exclude '.secrets' "$1/" "$2/"
+}
+
+valid_code() {
+  echo "$1" | grep -qE '^[a-z][a-z0-9-]{1,30}$' || die "应用 code 须为小写字母开头，只含小写字母、数字、短横线（2~31 位），如 kaoqin、purchase"
+  case "$RESERVED_CODES" in *" $1 "*) die "$1 是平台保留名称，换一个";; esac
+}
+
+# ---------------------------------------------------------------- up
+cmd_up() {
+  local code="${1:-}"
+  if [ "$code" = "console" ]; then cmd_start_platform --build; return; fi
+  valid_code "$code"; load_env
+  local dir="$APPS/$code" m
+  m="$(manifest "$code")"; [ -n "$m" ] || die "apps/$code 下没有应用清单；先 yh add 或 yh new"
+  jq empty "$m" 2>/dev/null || die "清单不是合法 JSON：$m"
+  local name port health callback entry mcp memory cpus image dbwanted url
+  name="$(mf "$m" .name)"; port="$(mf "$m" .port)"; health="$(mf "$m" .health)"; callback="$(mf "$m" .callback)"
+  entry="$(mf "$m" .entry)"; mcp="$(mf "$m" .mcp)"; memory="$(mf "$m" .memory)"; image="$(mf "$m" .image)"
+  dbwanted="$(mf "$m" .database)"; cpus="$(mf "$m" .cpus)"
+  [ -n "$name" ] && [ -n "$port" ] || die "清单缺少 name 或 port"
+  health="${health:-/health}"; callback="${callback:-/sso/callback}"; entry="${entry:-/}"; memory="${memory:-256m}"; cpus="${cpus:-1.0}"
+  echo "$cpus" | grep -qE '^[0-9]+(\.[0-9]+)?$' || die "清单里的 cpus 要是数字，如 0.5、1、2"
+  url="$(app_url "$code")"
+  local envf="$dir/.env" bp; bp="$(app_base "$code")"
+  mkdir -p "$dir/data"
+
+  docker ps --format '{{.Names}}' | grep -q '^yh-console$' || cmd_start_platform
+  step "上线 ${name}（${code}）→ $url/"
+
+  # 1. 数据库
+  if [ "$dbwanted" = "true" ]; then
+    local dbname="app_${code//-/_}" dbuser="${code//-/_}" dbpass
+    dbpass="$(env_get "$envf" YH_DB_PASSWORD)"; [ -n "$dbpass" ] || dbpass="$(rand 16)"
+    wait_mysql
+    ensure_db "$dbname" "$dbuser" "$dbpass" || die "建库失败"
+    env_set "$envf" YH_DB_PASSWORD "$dbpass"
+    env_set "$envf" DATABASE_URL "mysql://$dbuser:$dbpass@yh-mysql:3306/$dbname"
+    green "  数据库 $dbname"
+  fi
+
+  # 2. 环境变量
+  env_set "$envf" PORT "$port"
+  # 测试模式用 staging：应用照常运行，但知道自己不在生产（不发真实通知等）
+  if is_test; then env_set "$envf" NODE_ENV "staging"; else env_set "$envf" NODE_ENV "production"; fi
+  local k
+  for k in $(jq -r '.env // {} | keys[]' "$m"); do env_set "$envf" "$k" "$(jq -r --arg k "$k" '.env[$k]' "$m")"; done
+
+  # 3. 登记到控制台，领统一认证凭证
+  console_ok || die "控制台不可用，先 yh start；日志：yh logs console"
+  local mcpurl="null" reset="false" src branch
+  [ -n "$mcp" ] && mcpurl="\"http://yh-$code:$port$mcp\""
+  [ -z "$(env_get "$envf" YH_CLIENT_SECRET)" ] && reset="true"
+  src="$(cat "$dir/.source" 2>/dev/null)"
+  branch="$(git -C "$dir/src" rev-parse --abbrev-ref HEAD 2>/dev/null)"; [ "$branch" = "HEAD" ] && branch="$(mf "$m" .deploy.branch)"
+  [ "${src#git:}" != "$src" ] || branch=""
+  local body resp secret
+  body="$(jq -n --argjson m "$(cat "$m")" --arg url "$url$entry" --arg cb "$url$callback" --argjson mcp "$mcpurl" --argjson reset "$reset" \
+    --arg src "$src" --arg branch "$branch" \
+    '{code:$m.code, name:$m.name, icon:$m.icon, iconColor:$m.iconColor, category:$m.category, description:$m.description,
+      url:$url, redirectUris:[$cb], mcpUrl:$mcp, visibility:$m.visibility, isDefault:($m.isDefault // false),
+      source:$src, branch:(if $branch == "" then null else $branch end), resetSecret:$reset}')"
+  resp="$(platform_api POST /api/platform/apps/register -H 'Content-Type: application/json' -d "$body")"
+  [ "$(echo "$resp" | jq -r .code 2>/dev/null)" = "0" ] || die "登记失败：$resp"
+  secret="$(echo "$resp" | jq -r '.data.clientSecret // empty')"
+  [ -n "$secret" ] && env_set "$envf" YH_CLIENT_SECRET "$secret"
+  env_set "$envf" YH_CLIENT_ID "$code"
+  env_set "$envf" YH_APP_URL "$url"
+  env_set "$envf" YH_BASE_PATH "$bp"
+  env_set "$envf" YH_WEB_URL "$PUBLIC_URL"
+  # 服务端调控制台走容器网络，不绕公网
+  env_set "$envf" YH_API_URL "http://yh-console:$CONSOLE_PORT"
+  green "  已登记到控制台$( [ -n "$secret" ] && echo '，统一认证凭证已写入 .env')"
+
+  # 4. 容器
+  {
+    echo "# yh 生成，勿手改（改 yh-app.json 后重新 yh up ${code}）"
+    echo "name: yh-$code"
+    echo "services:"
+    echo "  app:"
+    if [ -n "$image" ]; then echo "    image: $image"; else
+      echo "    build: ./src"
+      echo "    image: yh-app-$code:latest"
+    fi
+    echo "    container_name: yh-$code"
+    echo "    restart: unless-stopped"
+    echo "    env_file: .env"
+    echo "    volumes:"
+    echo "      - ./data:/data"
+    echo "    networks: [$(app_net "$code")]"
+    echo "    mem_limit: $memory"
+    echo "    cpus: $cpus"
+    echo "    pids_limit: 512"
+    echo "    security_opt: [no-new-privileges:true]"
+    echo "networks:"
+    echo "  $(app_net "$code"):"
+    echo "    external: true"
+  } > "$dir/compose.yml"
+  ensure_app_net "$code"
+  step "构建并启动容器"
+  local out; out="$(docker compose -f "$dir/compose.yml" up -d --build 2>&1)"
+  if [ $? -ne 0 ] || echo "$out" | nocolor | grep -qE "^ERROR|failed to solve|error during connect"; then
+    echo "$out" | nocolor | tail -30 | sed 's/^/    /'
+    die "容器构建或启动失败"
+  fi
+  rm -f "$dir/.stopped"
+  green "  yh-$code 已启动"
+
+  # 5. 路由：剥掉前缀再转给应用，前缀放在 X-Forwarded-Prefix 里（应用据此拼跳转地址、设 cookie 路径）
+  rm_app_routes "$code"
+  cat > "$(app_route_file "$code")" <<EOF
+# ${name}（yh 生成）
+redir $bp $bp/ 308
+handle $bp/* {
+	uri strip_prefix $bp
+	reverse_proxy yh-$code:$port {
+		header_up X-Forwarded-Prefix $bp
+		flush_interval -1
+	}
+}
+EOF
+  caddy_reload
+  green "  路由 $bp/ → yh-$code:$port"
+
+  # 6. 健康检查（经 Caddy，顺带验证路由）
+  step "健康检查 $health"
+  local i=0 st=""
+  while [ $i -lt 90 ]; do
+    st="$(app_http "$code" "$health")"
+    [ "$st" = "200" ] && break
+    i=$((i + 2)); sleep 2
+  done
+  [ "$st" = "200" ] || { docker logs --tail 20 "yh-$code" 2>&1 | sed 's/^/    /'; die "健康检查未通过（HTTP ${st}）：yh logs $code"; }
+  green "  内网正常"
+  if ! is_test && [ -n "${FRP_TOKEN:-}" ] && [ -n "${FRP_SERVER_ADDR:-}" ]; then
+    st="$(curl -s -o /dev/null --max-time 15 -w '%{http_code}' "$url$health")"
+    if [ "$st" = "200" ]; then green "  公网正常"; else gray "  公网暂不可达（HTTP ${st}），执行 yh doctor 排查"; fi
+  fi
+  echo
+  green "✅ $name 已上线：$url/"
+}
+
+# ---------------------------------------------------------------- update / down / remove / restart / logs
+cmd_update() { # cmd_update <code> [触发：手动|控制台]
+  local code="${1:-}" trigger="${2:-手动}"; valid_code "$code"; load_env
+  local src; src="$(cat "$APPS/$code/.source" 2>/dev/null)"
+  case "$src" in
+    git:*)
+      local m branch; m="$(manifest "$code")"
+      branch="$(mf "$m" .deploy.branch)"
+      [ -n "$branch" ] || branch="$(git -C "$APPS/$code/src" rev-parse --abbrev-ref HEAD)"
+      [ "$branch" != "HEAD" ] || die "不知道跟踪哪个分支：在 yh-app.json 里写 \"deploy\": {\"branch\": \"release\"}"
+      deploy_lock || die "另一个发布正在进行（$(cat "$ROOT/.deploy.lock/pid" 2>/dev/null)），稍后再试"
+      deploy_git "$code" "$branch" "$trigger"; local rc=$?
+      deploy_unlock; return $rc;;
+    path:template-*) gray "  模板生成的应用，直接在 apps/$code/src 里改代码";;
+    path:*) step "同步 ${src#path:}"; sync_path "${src#path:}" "$APPS/$code/src";;
+    *) die "不知道 $code 的代码来源（apps/$code/.source）";;
+  esac
+  cmd_up "$code"
+}
+
+cmd_down() {
+  local code="${1:-}"; valid_code "$code"; load_env
+  [ -d "$APPS/$code" ] || die "没有应用 $code"
+  [ -f "$APPS/$code/compose.yml" ] && docker compose -f "$APPS/$code/compose.yml" down >/dev/null 2>&1
+  touch "$APPS/$code/.stopped"
+  rm_app_routes "$code"; caddy_reload
+  platform_api POST "/api/platform/apps/$code/disable" >/dev/null
+  green "✅ $code 已停用（代码、数据、数据库都保留；yh up $code 恢复）"
+}
+
+cmd_remove() {
+  local code="${1:-}" yes="${2:-}"; valid_code "$code"; load_env
+  [ -d "$APPS/$code" ] || die "没有应用 $code"
+  if [ "$yes" != "--yes" ]; then
+    printf '将移除 %s：先备份到 backups/removed/，再删除容器、路由、数据库和代码。确认请输入 %s：' "$code" "$code"; read -r ans
+    [ "$ans" = "$code" ] || die "已取消"
+  fi
+  local m ts dir; m="$(manifest "$code")"; ts="$(date +%Y%m%d-%H%M%S)"; dir="$ROOT/backups/removed/$code-$ts"
+  mkdir -p "$dir"; chmod 700 "$ROOT/backups" "$ROOT/backups/removed" 2>/dev/null
+  step "备份到 ${dir#$ROOT/}"
+  if [ -n "$m" ] && [ "$(mf "$m" .database)" = "true" ]; then
+    docker exec yh-mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --no-tablespaces \
+      "app_${code//-/_}" 2>/dev/null | gzip > "$dir/db.sql.gz"
+    [ "${PIPESTATUS[0]}" = "0" ] || die "数据库备份失败，已中止移除（什么都没删）"
+    green "  数据库 app_${code//-/_}"
+  fi
+  [ -f "$APPS/$code/compose.yml" ] && docker compose -f "$APPS/$code/compose.yml" down >/dev/null 2>&1
+  rm_app_routes "$code"; caddy_reload
+  drop_app_net "$code"
+  mv "$APPS/$code" "$dir/app" || die "移动 apps/$code 失败"
+  green "  代码、数据目录、.env"
+  if [ -n "$m" ] && [ -f "$dir/db.sql.gz" ]; then
+    mysql_root -e "DROP DATABASE IF EXISTS \`app_${code//-/_}\`; DROP USER IF EXISTS '${code//-/_}'@'%';"
+  fi
+  local t
+  for t in $(docker images "yh-app-$code" --format '{{.Tag}}' 2>/dev/null); do docker rmi "yh-app-$code:$t" >/dev/null 2>&1; done
+  platform_api POST "/api/platform/apps/$code/remove" >/dev/null
+  green "✅ 已移除 ${code}。要恢复：把 ${dir#$ROOT/}/app 挪回 apps/$code$( [ -f "$dir/db.sql.gz" ] && echo "，yh restore $code ${dir#$ROOT/}/db.sql.gz" )，再 yh up $code"
+}
+
+container_of() { case "$1" in console|caddy|mysql|redis|frpc) echo "yh-$1";; *) valid_code "$1"; echo "yh-$1";; esac; }
+cmd_restart() { local c; c="$(container_of "${1:-}")" || exit 1; docker restart "$c" >/dev/null && green "✅ 已重启 $c"; }
+cmd_logs() { local c; c="$(container_of "${1:-}")" || exit 1; shift || true; docker logs --tail 200 "$@" "$c"; }
+
+cmd_db() {
+  local code="${1:-}"; load_env
+  if [ "$code" = "console" ]; then docker exec -it yh-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" yh_console; return; fi
+  valid_code "$code"
+  docker exec -it yh-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "app_${code//-/_}"
+}
+
+cmd_passwd() {
+  local user="${1:-}"; load_env
+  [ -n "$user" ] || die "用法：yh passwd <账号>，如 yh passwd admin"
+  console_ok || die "控制台不可用：yh logs console"
+  local pw; pw="$(rand_password)"
+  local resp; resp="$(platform_api POST /api/platform/users/password -H 'Content-Type: application/json' -d "$(jq -n --arg u "$user" --arg p "$pw" '{username:$u, password:$p}')")"
+  [ "$(echo "$resp" | jq -r .code 2>/dev/null)" = "0" ] || die "失败：$(echo "$resp" | jq -r '.message // .' 2>/dev/null)"
+  green "✅ $(echo "$resp" | jq -r .data.name)（${user}）的新密码：$pw"
+  gray "   登录后请在「个人中心」改成自己的密码"
+}
+
+# ---------------------------------------------------------------- 自动发布（release 分支）
+# 应用在 yh-app.json 里声明 "deploy": {"branch": "release", "mode": "auto"}（manual = 只通知有新版本）。
+# yh agent 每 WATCH_INTERVAL 秒检查一次：远端分支有新提交 → 备份 → 构建上线 → 健康检查 → 不通过自动回滚 → 通知。
+# 平台自身（本仓库）也跟踪 release 分支，每轮先自更新。
+
+# 通知群机器人（钉钉自定义机器人）；测试模式只写日志不发送。记录一律写 backups/notify.log
+# 发布通知：发到「系统设置 → 发布通知」里配置的群机器人（飞书 / 钉钉 / 企业微信，可多选）。
+# 配置经平台接口从控制台取（控制台在重建时用本地缓存的上一份），都没有再退回 yh.env 的钉钉（老安装兼容）。
+notify() { # notify <标题> <markdown 正文>
+  local title="$1" text="$2\n\n> 以虎 One 自动发布 · $(hostname -s)" log="$ROOT/backups/notify.log" # 落款含关键词「发布」
+  printf '[%s] %s\n%s\n\n' "$(date '+%F %T')" "$title" "$text" >> "$log"
+  is_test && return 0
+  local cfg="$ROOT/backups/.notify.json" jo fresh
+  fresh="$(platform_api GET /api/platform/notify-config 2>/dev/null | jq -c '.data // empty' 2>/dev/null)"
+  if [ -n "$fresh" ] && [ "$fresh" != "null" ]; then
+    printf '%s' "$fresh" > "$cfg"; jo="$fresh" # 控制台取到了就顺手刷新缓存
+  elif [ -s "$cfg" ]; then
+    jo="$(cat "$cfg")"
+  fi
+  if [ -n "$jo" ]; then
+    [ "$(printf '%s' "$jo" | jq -r '.enabled // false')" = "true" ] || return 0
+    notify_feishu "$(printf '%s' "$jo" | jq -r '.feishuWebhook // empty')"
+    notify_dingtalk "$(printf '%s' "$jo" | jq -r '.dingtalkWebhook // empty')" "$(printf '%s' "$jo" | jq -r '.dingtalkSecret // empty')"
+    notify_wecom "$(printf '%s' "$jo" | jq -r '.wecomWebhook // empty')"
+    return 0
+  fi
+  # 老配置兜底：yh.env 里的钉钉
+  [ -n "${DINGTALK_WEBHOOK:-}" ] || return 0
+  notify_dingtalk "$DINGTALK_WEBHOOK" "${DINGTALK_SECRET:-}"
+}
+
+notify_plain() { # markdown 标题+正文 → 纯文本（飞书 / 企业微信的文本消息不吃 markdown）
+  printf '%s' "$text" | jq -rjRs 'gsub("\\\\n"; "\n")' | sed -E 's/^#+ //; s/\*\*//g; s/`//g; s/^> //'
+}
+
+notify_feishu() { # notify_feishu <webhook>。纯文本直接用正文(开头的 # 标题剥掉标记后就是标题)
+  local url="$1"; [ -n "$url" ] || return 0
+  notify_post "$url" "$(jq -n --arg x "$(notify_plain)" '{msg_type:"text", content:{text:$x}}')"
+}
+
+notify_dingtalk() { # notify_dingtalk <webhook> <加签密钥(可选)>
+  local url="$1" secret="$2" ts sign; [ -n "$url" ] || return 0
+  if [ -n "$secret" ]; then # 机器人安全设置选了「加签」
+    ts="$(($(date +%s) * 1000))"
+    sign="$(printf '%s\n%s' "$ts" "$secret" | openssl dgst -sha256 -hmac "$secret" -binary | base64 | tr -d '\n' | jq -sRr @uri)"
+    url="$url&timestamp=$ts&sign=$sign"
+  fi
+  notify_post "$url" "$(jq -n --arg t "$title" --arg x "$text" '{msgtype:"markdown", markdown:{title:$t, text:($x | gsub("\\\\n"; "\n"))}}')"
+}
+
+notify_wecom() { # notify_wecom <webhook>
+  local url="$1"; [ -n "$url" ] || return 0
+  notify_post "$url" "$(jq -n --arg x "$(notify_plain)" '{msgtype:"text", text:{content:$x}}')"
+}
+
+notify_post() { # notify_post <url> <body> —— 发送失败只提示, 不影响发布主流程
+  local url="$1" body="$2" resp code
+  resp="$(curl -s --max-time 10 -H 'Content-Type: application/json' -d "$body" "$url")" || { echo "  ↑ 发送失败（连不上）：$url" >> "$log"; return 0; }
+  code="$(printf '%s' "$resp" | jq -r '.errcode // .code // empty' 2>/dev/null)"
+  [ -z "$code" ] && return 0
+  [ "$code" = "0" ] && return 0
+  red "  通知发送失败：$resp"; echo "  ↑ 发送失败：$resp" >> "$log"
+}
+
+# 发布锁：自动发布、控制台操作、手动 yh update 不能同时跑
+# pid 用来判断持有者还在不在（$$ 是顶层 yh 进程，子 shell 里也不变）；令牌用来判断是不是自己拿的锁
+# （macOS 自带 bash 3.2 没有 BASHPID，子 shell 拿不到自己的 pid）
+LOCK_TOKEN=""
+deploy_lock() {
+  local l="$ROOT/.deploy.lock"
+  if ! mkdir "$l" 2>/dev/null; then
+    kill -0 "$(cat "$l/pid" 2>/dev/null)" 2>/dev/null && return 1
+    rm -rf "$l"; mkdir "$l" 2>/dev/null || return 1 # 上次异常退出留下的锁
+  fi
+  LOCK_TOKEN="$(rand 8)"
+  echo $$ > "$l/pid"; echo "$LOCK_TOKEN" > "$l/token"
+  trap deploy_unlock EXIT # 中途出错退出也释放
+}
+deploy_unlock() {
+  [ -n "$LOCK_TOKEN" ] && [ "$(cat "$ROOT/.deploy.lock/token" 2>/dev/null)" = "$LOCK_TOKEN" ] && rm -rf "$ROOT/.deploy.lock"
+  LOCK_TOKEN=""; return 0
+}
+deploy_locked() { kill -0 "$(cat "$ROOT/.deploy.lock/pid" 2>/dev/null)" 2>/dev/null; }
+
+# 更新前备份单个应用：数据库 + 数据目录，每个应用保留最近 5 份
+backup_app() { # backup_app <code> <版本> → 打印备份目录
+  local code="$1" dir="$ROOT/backups/deploy/$1/$(date +%Y%m%d-%H%M%S)-$2" m
+  mkdir -p "$dir"; chmod 700 "$ROOT/backups" "$ROOT/backups/deploy" 2>/dev/null
+  m="$(manifest "$code")"
+  if [ "$(mf "$m" .database)" = "true" ]; then
+    docker exec yh-mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --no-tablespaces \
+      "app_${code//-/_}" 2>/dev/null | gzip > "$dir/db.sql.gz"
+    [ "${PIPESTATUS[0]}" = "0" ] || return 1
+  fi
+  if [ -d "$APPS/$code/data" ] && [ -n "$(ls -A "$APPS/$code/data" 2>/dev/null)" ]; then
+    tar -czf "$dir/data.tar.gz" -C "$APPS/$code" data .env 2>/dev/null || return 1
+  fi
+  ls -1d "$ROOT/backups/deploy/$code"/*/ 2>/dev/null | sort -r | tail -n +6 | while read -r d; do rm -rf "$d"; done
+  echo "$dir"
+}
+
+history_add() { # history_add <code> <结果> <版本> <作者> <说明> <触发>
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date '+%F %T')" "$1" "$2" "$3" "$4" "$5" "$6" >> "$ROOT/backups/deploy-history.tsv"
+  # 同步一份到控制台（失败不影响发布）
+  platform_api POST /api/platform/deploys -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg a "$1" --arg r "$2" --arg v "$3" --arg au "$4" --arg s "$5" --arg t "$6" '{appCode:$a, result:$r, version:$v, author:$au, subject:$s, trigger:$t}')" >/dev/null 2>&1 || true
+}
+
+health_ok() { # health_ok <code> <秒>
+  local code="$1" wait="$2" m health i=0
+  m="$(manifest "$code")"; health="$(mf "$m" .health)"
+  while [ $i -lt "$wait" ]; do
+    [ "$(app_http "$code" "${health:-/health}")" = "200" ] && return 0
+    i=$((i + 2)); sleep 2
+  done
+  return 1
+}
+
+# 拉取分支最新提交并上线；失败回滚到原镜像。调用前需持有发布锁
+deploy_git() { # deploy_git <code> <分支> <触发：自动|手动|控制台>
+  local code="$1" branch="$2" trigger="$3"
+  local src="$APPS/$code/src" dir="$APPS/$code" m name old new short oshort author subject bk log rc
+  m="$(manifest "$code")"; name="$(mf "$m" .name)"
+  export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+  git -C "$src" fetch -q origin "$branch" || { red "✗ ${code}：拉取 $branch 失败"; return 1; }
+  old="$(git -C "$src" rev-parse HEAD)"; new="$(git -C "$src" rev-parse FETCH_HEAD)"
+  short="${new:0:7}"; oshort="${old:0:7}"
+  author="$(git -C "$src" log -1 --format=%an FETCH_HEAD)"; subject="$(git -C "$src" log -1 --format=%s FETCH_HEAD)"
+  if [ "$old" = "$new" ]; then
+    [ "$trigger" = "自动" ] && return 0
+    gray "  $code 已是 $branch 最新（${short}），重新上线以应用配置"
+    ( cmd_up "$code" ); return $?
+  fi
+
+  step "发布 ${name}（${code}）$oshort → ${short}：${subject}（${author}）"
+  # 1. 备份
+  bk="$(backup_app "$code" "$oshort")" || {
+    notify "❌ $name 发布中止" "#### ❌ $name 发布中止\n\n更新前备份失败，未做任何改动。\n\n- 版本：$short ${subject}（${author}）\n- 排查：\`yh logs $code\`、\`docker logs yh-mysql\`"
+    history_add "$code" "中止" "$short" "$author" "$subject" "$trigger"; return 1; }
+  green "  已备份 ${bk#$ROOT/}"
+  # 2. 给正在运行的镜像打上旧版本标签，回滚用
+  docker image inspect "yh-app-$code:latest" >/dev/null 2>&1 && docker tag "yh-app-$code:latest" "yh-app-$code:$oshort"
+  # 3. 切代码、构建、上线（子 shell：cmd_up 里的 die 只结束子 shell）
+  git -C "$src" checkout -q -f --detach FETCH_HEAD || { red "✗ 切换代码失败"; return 1; }
+  log="$dir/deploy-$short.log"
+  ( cmd_up "$code" ) > "$log" 2>&1; rc=$?
+  nocolor < "$log" | sed 's/^/  /'
+  if [ $rc -eq 0 ]; then
+    docker tag "yh-app-$code:latest" "yh-app-$code:$short" 2>/dev/null
+    rm -f "$dir/.deploy-failed" "$log"
+    # 镜像只留最近 3 个版本
+    docker images "yh-app-$code" --format '{{.Tag}} {{.CreatedAt}}' | grep -v '^latest ' | sort -k2 -r | tail -n +4 \
+      | while read -r t _; do docker rmi "yh-app-$code:$t" >/dev/null 2>&1; done
+    history_add "$code" "成功" "$short" "$author" "$subject" "$trigger"
+    notify "✅ $name 已发布" "#### ✅ $name 已发布 $short\n\n- 更新：$subject\n- 提交人：$author\n- 上一版本：${oshort}（${trigger}发布）\n- 地址：$(app_url "$code")/"
+    green "✅ $name 已发布 $short"; return 0
+  fi
+
+  # 4. 回滚：切回旧代码和旧镜像
+  red "✗ 新版本上线失败，回滚到 ${oshort}（日志 ${log#$ROOT/}）"
+  echo "$new" > "$dir/.deploy-failed" # 同一个提交不再反复自动尝试，等下一次提交
+  git -C "$src" checkout -q -f --detach "$old" 2>/dev/null
+  local rb="已回滚到 ${oshort}，服务正常"
+  if docker image inspect "yh-app-$code:$oshort" >/dev/null 2>&1; then
+    docker tag "yh-app-$code:$oshort" "yh-app-$code:latest"
+    docker compose -f "$dir/compose.yml" up -d --no-build >/dev/null 2>&1
+    # 失败的 cmd_up 可能已经删掉或没写路由：按旧版本重建一次（不重新构建）
+    [ -f "$(app_route_file "$code")" ] || ( cmd_up "$code" ) >/dev/null 2>&1
+    health_ok "$code" 60 || rb="**回滚后仍不健康，需要人工处理**"
+  else
+    rb="**没有旧镜像可回滚（首次发布？），需要人工处理**"
+  fi
+  local tail_; tail_="$(nocolor < "$log" | grep -v '^[[:space:]]*$' | tail -5 | sed 's/^/    /')"
+  history_add "$code" "回滚" "$short" "$author" "$subject" "$trigger"
+  notify "⚠️ $name 发布失败" "#### ⚠️ $name 发布失败，$rb\n\n- 失败版本：$short ${subject}（${author}）\n- 更新前备份：\`${bk#$ROOT/}\`（新版本若已改表结构，旧版本可能不兼容，按需 \`yh restore\`）\n- 日志：\`${log#$ROOT/}\`\n\n$tail_\n\n修复后推新提交到 $branch 即可自动重试。"
+  red "  $rb"; return 1
+}
+
+# 平台自更新：跟踪本仓库的 release 分支，新版本语法检查通过才切换；控制台代码有变化就重新构建控制台
+# 更新后用新脚本重新执行 <接下来的命令>（agent 就重启 agent）
+self_update() { # self_update <exec 的参数…>
+  [ -d "$ROOT/.git" ] || return 0
+  local branch="${PLATFORM_BRANCH:-release}" old new
+  new="$(git -C "$ROOT" ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)"
+  old="$(git -C "$ROOT" rev-parse HEAD)"
+  [ -n "$new" ] && [ "$new" != "$old" ] || return 0
+  [ "$new" = "$(cat "$ROOT/.self-failed" 2>/dev/null)" ] && return 0
+  git -C "$ROOT" fetch -q origin "$branch" || return 0
+  local subject author tmp; subject="$(git -C "$ROOT" log -1 --format=%s FETCH_HEAD)"; author="$(git -C "$ROOT" log -1 --format=%an FETCH_HEAD)"
+  tmp="$(mktemp)"; git -C "$ROOT" show FETCH_HEAD:yh > "$tmp"
+  if ! /bin/bash -n "$tmp" 2>/dev/null || ! git -C "$ROOT" checkout -q --detach FETCH_HEAD 2>/dev/null; then
+    rm -f "$tmp"; echo "$new" > "$ROOT/.self-failed"
+    notify "⚠️ 平台 yh 更新失败" "#### ⚠️ 平台 yh 更新失败\n\n- 版本：${new:0:7} ${subject}（${author}）\n- 原因：新脚本语法检查不通过，或本机改过平台文件\n- 仍在用 ${old:0:7}，各应用自动发布不受影响"
+    return 0
+  fi
+  rm -f "$tmp" "$ROOT/.self-failed"
+  local hint=""
+  if ! git -C "$ROOT" diff --quiet "$old" "$new" -- console/ 2>/dev/null; then
+    # CONSOLE_DEPLOY=image（小内存服务器）：控制台不在本机构建，镜像由 scripts/sync-console-image.sh 从镜像仓库自动同步，这里只重启加载
+    if grep -q '^CONSOLE_DEPLOY=image' "$ROOT/yh.env" 2>/dev/null; then
+      if ( cmd_start_platform ) > "$ROOT/backups/console-update.log" 2>&1; then hint="\n- 控制台已重启（镜像模式：代码变更经镜像仓库 sync-console-image 同步）"
+      else hint="\n- **控制台重启失败，仍在运行旧版本**：见 backups/console-update.log"; fi
+    elif ( cmd_start_platform --build ) > "$ROOT/backups/console-update.log" 2>&1; then hint="\n- 控制台已重新构建上线"
+    else hint="\n- **控制台重新构建失败，仍在运行旧版本**：见 backups/console-update.log"; fi
+  elif ! git -C "$ROOT" diff --quiet "$old" "$new" -- platform/ 2>/dev/null; then
+    ( cmd_start_platform ) >/dev/null 2>&1 && hint="\n- 平台组件配置已重新加载"
+  fi
+  history_add "platform" "成功" "${new:0:7}" "$author" "$subject" "自动"
+  notify "✅ 以虎 One 平台已更新" "#### ✅ 以虎 One 平台已更新 ${new:0:7}\n\n- 更新：$subject\n- 提交人：$author$hint"
+  exec /bin/bash "$ROOT/yh" "$@"
+}
+
+cmd_watch() {
+  load_env
+  export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+  [ "${1:-}" = "--no-self" ] || self_update watch --no-self
+  deploy_lock || return 0
+  local d c m mode branch src new
+  for d in "$APPS"/*/; do
+    [ -d "$d" ] || continue
+    c="$(basename "$d")"; m="$(manifest "$c")"; [ -n "$m" ] || continue
+    [ -f "$d/.stopped" ] && continue
+    src="$(cat "$d/.source" 2>/dev/null)"; [ "${src#git:}" != "$src" ] || continue
+    mode="$(mf "$m" .deploy.mode)"; branch="$(mf "$m" .deploy.branch)"; branch="${branch:-release}"
+    [ "$mode" = "auto" ] || [ "$mode" = "manual" ] || continue
+    new="$(git -C "$d/src" ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)"
+    [ -n "$new" ] || { echo "[$(date '+%F %T')] ${c}：查不到远端分支 ${branch}（网络、权限，或还没推过）"; continue; }
+    [ "$new" = "$(git -C "$d/src" rev-parse HEAD)" ] && continue
+    [ "$new" = "$(cat "$d/.deploy-failed" 2>/dev/null)" ] && continue
+    echo "[$(date '+%F %T')] ${c}：$branch 有新提交 ${new:0:7}"
+    if [ "$mode" = "manual" ]; then
+      [ "$new" = "$(cat "$d/.deploy-notified" 2>/dev/null)" ] && continue
+      echo "$new" > "$d/.deploy-notified"
+      notify "🆕 $(mf "$m" .name) 有新版本" "#### 🆕 $(mf "$m" .name) 有新版本 ${new:0:7}\n\n该应用为手动发布，确认后在控制台「管理 → 应用」点「发布」，或在服务器上执行 \`yh update $c\`"
+      continue
+    fi
+    deploy_git "$c" "$branch" "自动"
+  done
+  deploy_unlock
+}
+
+# ---------------------------------------------------------------- 平台升级
+# 平台自身的更新有两条路，看这台机器是怎么装的：
+#   从 Git 装的（有 .git）：跟踪 release 分支，yh agent 自动更新（上面的 self_update）
+#   用更新包装的（没有 .git）：yh upgrade 按版本号升级。发布方用 scripts/pack.sh 打 yihu-one-<版本>.tar.gz + latest.json 放到下载地址；
+#     能联网：按 yh.env 的 UPGRADE_URL 取清单、下载；不能联网：把包拷进来 yh upgrade --package <包>，或在控制台上传
+#   升级前备份平台文件和控制台数据库，控制台起不来自动回滚。应用、应用数据、yh.env 不动
+UPGRADE_DIR="$ROOT/backups/upgrade"
+
+platform_version() { local v; v="$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null)"; echo "${v:-0.0.0}"; }
+platform_mode() { if [ -d "$ROOT/.git" ]; then echo git; else echo package; fi; }
+sha256_of() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi; }
+
+ver_cmp() { # ver_cmp <a> <b> → 输出 -1 / 0 / 1（a<b / 相等 / a>b）
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    split(a, A, "."); split(b, B, ".");
+    for (i = 1; i <= 3; i++) {
+      x = (i in A) ? A[i] + 0 : 0; y = (i in B) ? B[i] + 0 : 0;
+      if (x > y) { print 1; exit } else if (x < y) { print -1; exit }
+    }
+    print 0
+  }'
+}
+
+# 取更新清单，存成 backups/upgrade/latest.json（上报给控制台用）；取不到时原因写在 check-error
+upgrade_fetch() {
+  mkdir -p "$UPGRADE_DIR"
+  local tmp="$UPGRADE_DIR/.latest.tmp"
+  rm -f "$UPGRADE_DIR/check-error"
+  if [ -z "${UPGRADE_URL:-}" ]; then
+    echo "没有配置更新地址（yh.env 里的 UPGRADE_URL）" > "$UPGRADE_DIR/check-error"; return 1
+  fi
+  if ! curl -fsSL --max-time 20 "$UPGRADE_URL" -o "$tmp" 2>/dev/null \
+    || ! jq -e '.version | strings | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")' "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"; echo "取不到更新清单：$UPGRADE_URL" > "$UPGRADE_DIR/check-error"; return 1
+  fi
+  jq --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{version, url, sha256, sig, minVersion, date, notes, checkedAt: $at}' "$tmp" > "$UPGRADE_DIR/latest.json"
+  rm -f "$tmp"
+}
+
+# 把平台版本、安装方式、查到的最新版本报给控制台（「管理 → 概览」里显示；控制台自己不联网查）
+report_platform() {
+  local latest="" err commit=""
+  [ -f "$UPGRADE_DIR/latest.json" ] && latest="$(jq -c '{version, minVersion, date, notes, checkedAt}' "$UPGRADE_DIR/latest.json" 2>/dev/null)"
+  err="$(cat "$UPGRADE_DIR/check-error" 2>/dev/null)"
+  [ "$(platform_mode)" = "git" ] && commit="$(git -C "$ROOT" rev-parse --short=7 HEAD 2>/dev/null)"
+  platform_api POST /api/platform/info -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg v "$(platform_version)" --arg m "$(platform_mode)" --arg c "$commit" --arg b "${PLATFORM_BRANCH:-release}" \
+      --argjson src "$([ -n "${UPGRADE_URL:-}" ] && echo true || echo false)" --argjson signed "$([ -f "$PLATFORM/release.pub" ] && echo true || echo false)" \
+      --argjson latest "${latest:-null}" --arg err "$err" \
+      '{version:$v, mode:$m, commit:$c, branch:$b, hasSource:$src, signed:$signed, latest:$latest, checkError:$err}')" >/dev/null 2>&1 || true
+}
+
+upgrade_notify_new() { # upgrade_notify_new <新版本>：每个版本只通知一次
+  [ "$1" = "$(cat "$UPGRADE_DIR/.notified" 2>/dev/null)" ] && return 0
+  echo "$1" > "$UPGRADE_DIR/.notified"
+  notify "🆕 以虎 One 有新版本 $1" "#### 🆕 以虎 One 有新版本 $1\n\n- 当前版本：$(platform_version)\n- 在控制台「管理 → 概览」点「升级」，或在服务器上执行 \`yh upgrade\`"
+}
+
+# 查一次新版本并报给控制台。会 die，agent 里放进子 shell 调用
+upgrade_check() {
+  local cur new rc=0
+  cur="$(platform_version)"
+  if [ "$(platform_mode)" = "git" ]; then
+    report_platform
+    green "这台机器是从 Git 安装的：平台跟踪 ${PLATFORM_BRANCH:-release} 分支，由 yh agent 自动更新（当前 ${cur}）"
+    return 0
+  fi
+  upgrade_fetch || rc=1
+  report_platform
+  [ "$rc" = 0 ] || die "$(cat "$UPGRADE_DIR/check-error")"
+  new="$(jq -r .version "$UPGRADE_DIR/latest.json")"
+  if [ "$(ver_cmp "$new" "$cur")" = "1" ]; then
+    green "🆕 有新版本 ${new}（当前 ${cur}）：在控制台「管理 → 概览」点「升级」，或执行 yh upgrade"
+    upgrade_notify_new "$new"
+  else
+    green "已是最新（${cur}）"
+  fi
+}
+
+# 平台文件清单（相对路径）：更新包自带 .yh-files；没有的话（不是用更新包装的）按目录现找
+upgrade_files() {
+  if [ -f "$ROOT/.yh-files" ]; then
+    (cd "$ROOT" && while IFS= read -r f; do [ -f "$f" ] && echo "$f"; done < .yh-files)
+  else
+    (cd "$ROOT" && find VERSION yh install.sh README.md yh.env.example console platform/compose.yml platform/Caddyfile platform/release.pub \
+      templates scripts docs cloud -type f 2>/dev/null | grep -vE '(^|/)(node_modules|dist)/')
+  fi
+}
+
+# 把 <目录> 里的文件盖到平台目录上。yh 自己先写到旁边再改名：原地覆盖会让正在运行的 yh（包括常驻 agent）读到半新半旧的脚本
+overlay_tree() {
+  local from="$1"
+  if [ -f "$from/yh" ]; then
+    cp -p "$from/yh" "$ROOT/.yh.new" && mv -f "$ROOT/.yh.new" "$ROOT/yh" || return 1
+    rm -f "$from/yh"
+  fi
+  cp -a "$from/." "$ROOT/"
+}
+
+# 从标准输入读相对路径，逐个删掉（只删平台文件，配置、应用、备份一律不碰），再清掉删空了的目录
+upgrade_rm() {
+  local f
+  while IFS= read -r f; do
+    case "$f" in ""|/*|*..*|yh.env|apps/*|backups/*|platform/console.env|platform/frpc.toml|platform/caddy/*) continue;; esac
+    rm -f "$ROOT/$f"
+  done
+  (cd "$ROOT" && find console templates scripts docs cloud -type d -empty -delete 2>/dev/null) || true
+}
+
+console_migrations() { mysql_root -N -e "SELECT CONCAT(migration_name, ':', finished_at IS NOT NULL) FROM yh_console._prisma_migrations ORDER BY 1" | tr '\n' ' '; }
+
+# 发布方在 platform/release.pub 放了公钥的话，更新包必须带对得上的签名（scripts/pack.sh 用私钥签的）
+upgrade_verify_sig() { # upgrade_verify_sig <包> <签名文件（base64）>
+  local pub="$PLATFORM/release.pub" bin rc
+  [ -f "$pub" ] || return 0
+  [ -s "$2" ] || die "这台机器要求更新包带签名（platform/release.pub），但没有找到签名文件（和包放在一起的 ${1##*/}.sig）"
+  bin="$(mktemp)"
+  tr -d ' \r\n' < "$2" | openssl base64 -d -A > "$bin" 2>/dev/null
+  openssl dgst -sha256 -verify "$pub" -signature "$bin" "$1" >/dev/null 2>&1; rc=$?
+  rm -f "$bin"
+  [ "$rc" = 0 ] || die "更新包签名校验不通过（包被改过，或不是官方发布的），已中止"
+  green "  签名校验通过"
+}
+
+# 回滚：平台文件恢复成备份里的，数据库结构变过就把控制台数据库也恢复，再用旧版本重建控制台
+upgrade_rollback() { # upgrade_rollback <备份目录> <升级前的迁移状态>
+  local bdir="$1" mig="$2" r="$1/restore"
+  step "回滚到升级前的版本"
+  rm -rf "$r"; mkdir -p "$r"
+  tar -xzf "$bdir/code.tar.gz" -C "$r" || { red "  解不开 ${bdir#$ROOT/}/code.tar.gz，请手动恢复"; return 1; }
+  # 新版本多出来的文件删掉（留着的话，比如多出来的数据库迁移，旧版本会起不来）
+  if [ -f "$ROOT/.yh-files" ]; then comm -13 <(sort "$bdir/files.list") <(sort "$ROOT/.yh-files") | upgrade_rm; fi
+  overlay_tree "$r" || red "  恢复平台文件失败，请手动解开 ${bdir#$ROOT/}/code.tar.gz"
+  rm -rf "$r"
+  if [ "$(console_migrations)" != "$mig" ]; then
+    step "恢复控制台数据库"
+    docker stop yh-console >/dev/null 2>&1
+    if mysql_root -e "DROP DATABASE IF EXISTS yh_console; CREATE DATABASE yh_console CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" \
+      && gunzip -c "$bdir/yh_console.sql.gz" | mysql_root yh_console; then green "  已恢复"
+    else red "  恢复失败，请手动执行：yh restore console ${bdir#$ROOT/}/yh_console.sql.gz"; fi
+  fi
+  if ( /bin/bash "$ROOT/yh" up console ) > "$UPGRADE_DIR/console-rollback.log" 2>&1; then green "  旧版本控制台已恢复运行"
+  else red "  旧版本控制台也没起来：见 backups/upgrade/console-rollback.log"; fi
+}
+
+# 安装一个更新包。在子 shell 里调用（会 die；发布锁也在这里拿）
+upgrade_apply() { # upgrade_apply <包> <签名文件> <当前版本> <--yes 或空> <清单里的版本或空> <临时目录> <触发>
+  local pkg="$1" sig="$2" cur="$3" yes="$4" expect="$5" x="$6/x" trigger="$7" new min ts bdir mig had_list="" log="$UPGRADE_DIR/console-build.log"
+  step "检查更新包"
+  upgrade_verify_sig "$pkg" "$sig"
+  mkdir -p "$x" "$UPGRADE_DIR"
+  tar -xzf "$pkg" -C "$x" --strip-components=1 2>/dev/null || die "解不开这个包（不是以虎 One 的更新包？）"
+  new="$(tr -d '[:space:]' < "$x/VERSION" 2>/dev/null)"
+  echo "$new" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || die "包里没有版本号（不是以虎 One 的更新包？）"
+  [ -f "$x/yh" ] && [ -f "$x/console/Dockerfile" ] && [ -f "$x/platform/compose.yml" ] || die "更新包不完整，已中止"
+  /bin/bash -n "$x/yh" 2>/dev/null || die "更新包里的 yh 语法检查不通过，已中止"
+  [ -z "$expect" ] || [ "$expect" = "$new" ] || die "包里的版本（${new}）和更新清单里的（${expect}）对不上，已中止"
+  min="$(jq -r '.minVersion // empty' "$x/.yh-release" 2>/dev/null)"
+  [ -z "$min" ] || [ "$(ver_cmp "$cur" "$min")" != "-1" ] || die "这个包要求当前版本不低于 ${min}（现在是 ${cur}），请先升级到 ${min}"
+  if [ "$(ver_cmp "$new" "$cur")" != "1" ] && [ -z "$yes" ]; then
+    gray "  包里的版本 ${new} 不高于当前 ${cur}，没有升级；确实要装请加 --yes"; return 0
+  fi
+  mysql_root -e 'SELECT 1' >/dev/null || die "平台没在运行（连不上 MySQL），先 yh start"
+  deploy_lock || die "另一个发布正在进行，稍后再试"
+
+  ts="$(date +%Y%m%d-%H%M%S)"; bdir="$UPGRADE_DIR/$ts-$cur"
+  step "备份当前版本 ${cur}（平台文件 + 控制台数据库）到 ${bdir#$ROOT/}"
+  mkdir -p "$bdir"; chmod 700 "$ROOT/backups" "$UPGRADE_DIR" 2>/dev/null
+  [ -f "$ROOT/.yh-files" ] && had_list=1
+  upgrade_files > "$bdir/files.list"
+  tar -czf "$bdir/code.tar.gz" -C "$ROOT" -T "$bdir/files.list" 2>/dev/null || die "备份平台文件失败，已中止（什么都没改）"
+  docker exec yh-mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --no-tablespaces yh_console 2>/dev/null | gzip > "$bdir/yh_console.sql.gz"
+  [ "${PIPESTATUS[0]}" = "0" ] || die "备份控制台数据库失败，已中止（什么都没改）"
+  mig="$(console_migrations)"
+
+  step "安装 ${new}"
+  if ! overlay_tree "$x"; then
+    upgrade_rollback "$bdir" "$mig"
+    die "写入新版本文件失败，已回滚到 ${cur}"
+  fi
+  # 新版本里已经没有的文件删掉
+  [ -n "$had_list" ] && [ -f "$ROOT/.yh-files" ] && comm -23 <(sort "$bdir/files.list") <(sort "$ROOT/.yh-files") | upgrade_rm
+
+  step "重新构建并启动控制台（数据库结构随之升级，约需几分钟）"
+  if ( /bin/bash "$ROOT/yh" up console ) > "$log" 2>&1; then
+    history_add "platform" "成功" "$new" "$(whoami)" "平台从 ${cur} 升级到 ${new}" "$trigger"
+    notify "✅ 以虎 One 已升级到 $new" "#### ✅ 以虎 One 已升级到 $new\n\n- 原版本：$cur\n- 控制台已重新构建上线\n- 升级前的备份：${bdir#$ROOT/}"
+    ls -1d "$UPGRADE_DIR"/2*/ 2>/dev/null | sort -r | tail -n +6 | while read -r d; do rm -rf "$d"; done
+    green "✅ 已升级到 ${new}（升级前的备份在 ${bdir#$ROOT/}）"
+  else
+    red "  新版本控制台没起来：$(grep -vE '^\s*$' "$log" | tail -3 | tr '\n' ' ')"
+    upgrade_rollback "$bdir" "$mig"
+    history_add "platform" "回滚" "$new" "$(whoami)" "升级到 ${new} 失败，已回滚到 ${cur}" "$trigger"
+    notify "⚠️ 以虎 One 升级失败已回滚" "#### ⚠️ 以虎 One 升级到 $new 失败\n\n- 已回滚到 $cur\n- 原因见服务器上的 backups/upgrade/console-build.log"
+    die "升级失败，已回滚到 ${cur}（原因见 backups/upgrade/console-build.log）"
+  fi
+}
+
+cmd_upgrade() {
+  load_env
+  local check="" package="" sig="" yes="" from_console="" trigger="手动"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1;;
+      --package) package="${2:-}"; shift;;
+      --sig) sig="${2:-}"; shift;;
+      --from-console) from_console="${2:-}"; shift;; # 控制台上传的更新包编号（agent 用）
+      --trigger) trigger="${2:-手动}"; shift;;
+      --yes) yes="--yes";;
+      *) die "未知参数 $1（yh upgrade [--check] [--package <本地包>] [--yes]）";;
+    esac
+    shift
+  done
+  if [ -n "$check" ]; then upgrade_check; return; fi
+  [ "$(platform_mode)" = "package" ] || die "这台机器是从 Git 安装的：平台跟踪 ${PLATFORM_BRANCH:-release} 分支，由 yh agent 自动更新，不用 yh upgrade"
+
+  local cur new="" url sha got tmp rc
+  cur="$(platform_version)"
+  tmp="$(mktemp -d)"
+  if [ -n "$from_console" ]; then
+    step "从控制台取上传的更新包 #$from_console"
+    platform_api GET "/api/platform/packages/$from_console" -f -o "$tmp/pkg.tar.gz" || { rm -rf "$tmp"; die "取不到更新包 #${from_console}（已经被删了？）"; }
+    platform_api GET "/api/platform/packages/$from_console/sig" -f -o "$tmp/pkg.tar.gz.sig" 2>/dev/null || rm -f "$tmp/pkg.tar.gz.sig"
+    package="$tmp/pkg.tar.gz"; sig="$tmp/pkg.tar.gz.sig"
+  elif [ -n "$package" ]; then
+    [ -f "$package" ] || { rm -rf "$tmp"; die "包不存在：$package"; }
+    [ -n "$sig" ] || sig="$package.sig"
+  else
+    step "检查更新：${UPGRADE_URL:-（未配置）}"
+    if ! upgrade_fetch; then
+      report_platform; rm -rf "$tmp"
+      die "$(cat "$UPGRADE_DIR/check-error")；不能联网的话，把更新包拷进来执行 yh upgrade --package <包>"
+    fi
+    report_platform
+    new="$(jq -r .version "$UPGRADE_DIR/latest.json")"
+    if [ "$(ver_cmp "$new" "$cur")" != "1" ] && [ -z "$yes" ]; then
+      rm -rf "$tmp"; green "已是最新（${cur}）"; return 0
+    fi
+    url="$(jq -r '.url // empty' "$UPGRADE_DIR/latest.json")"
+    [ -n "$url" ] || { rm -rf "$tmp"; die "更新清单里没有下载地址"; }
+    # 清单里可以只写文件名：和清单放在同一个目录下
+    case "$url" in *://*) ;; *) url="${UPGRADE_URL%/*}/$url";; esac
+    step "下载 ${new}：$url"
+    curl -fsSL --max-time 600 -o "$tmp/pkg.tar.gz" "$url" || { rm -rf "$tmp"; die "下载失败：$url"; }
+    sha="$(jq -r '.sha256 // empty' "$UPGRADE_DIR/latest.json")"
+    if [ -n "$sha" ]; then
+      got="$(sha256_of "$tmp/pkg.tar.gz")"
+      [ "$got" = "$sha" ] || { rm -rf "$tmp"; die "下载的包和清单里的 SHA256 对不上，已中止（什么都没改）"; }
+      green "  SHA256 校验通过"
+    fi
+    jq -r '.sig // empty' "$UPGRADE_DIR/latest.json" > "$tmp/pkg.tar.gz.sig"
+    package="$tmp/pkg.tar.gz"; sig="$tmp/pkg.tar.gz.sig"
+  fi
+
+  ( upgrade_apply "$package" "$sig" "$cur" "$yes" "$new" "$tmp" "$trigger" ); rc=$?
+  rm -rf "$tmp"
+  report_platform
+  return $rc
+}
+
+cmd_history() { # yh history [code]
+  local f="$ROOT/backups/deploy-history.tsv"
+  [ -f "$f" ] || { gray "还没有发布记录"; return 0; }
+  printf '%-19s  %-12s %-4s %-8s %-10s %s\n' "时间" "应用" "结果" "版本" "提交人" "说明"
+  awk -F'\t' -v c="${1:-}" 'c=="" || $2==c' "$f" | tail -30 \
+    | awk -F'\t' '{printf "%-19s  %-12s %-4s %-8s %-10s %s（%s）\n", $1, $2, $3, $4, $5, $6, $7}'
+}
+
+# ---------------------------------------------------------------- agent：控制台 ↔ 宿主机
+# 控制台容器不碰 Docker。管理员在控制台点的操作排进队列，agent 每几秒领一个执行，把日志交回控制台
+
+# 各应用运行状态 → JSON 数组
+status_json() {
+  local d c m st hc ver mem stats="" out="[" sep=""
+  stats="$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null)"
+  for d in "$APPS"/*/; do
+    [ -d "$d" ] || continue
+    c="$(basename "$d")"; m="$(manifest "$c")"; [ -n "$m" ] || continue
+    st="$(docker inspect -f '{{.State.Status}}' "yh-$c" 2>/dev/null)"; st="${st:-missing}"
+    hc="bad"
+    if [ "$st" = "running" ]; then
+      hc="$(app_http "$c" "$(mf "$m" .health)")"
+      [ "$hc" = "200" ] && hc="ok" || hc="HTTP $hc"
+    fi
+    [ -f "$d/.stopped" ] && { st="stopped"; hc="stopped"; }
+    # 只有从 Git 接入的应用有版本（本机目录接入的，git 会一路找到平台仓库自己的提交）
+    ver=""; [ -e "$d/src/.git" ] && ver="$(git -C "$d/src" rev-parse --short=7 HEAD 2>/dev/null)"
+    mem="$(echo "$stats" | awk -v n="yh-$c" '$1==n {print $2}')"
+    out="$out$sep$(jq -cn --arg c "$c" --arg s "$st" --arg h "$hc" --arg v "$ver" --arg mem "$mem" '{code:$c, state:$s, health:$h, version:$v, memory:$mem}')"
+    sep=","
+  done
+  echo "$out]"
+}
+
+report_status() {
+  platform_api POST /api/platform/apps/status -H 'Content-Type: application/json' -d "{\"apps\":$(status_json)}" >/dev/null 2>&1 || true
+}
+
+# 执行一个控制台操作，输出即日志。在子 shell 里调用
+run_op() { # run_op <kind> <code> <params json>
+  local kind="$1" code="$2" params="$3" git branch lines pkg
+  case "$kind" in
+    INSTALL)
+      git="$(echo "$params" | jq -r '.git // empty')"; branch="$(echo "$params" | jq -r '.branch // empty')"
+      deploy_lock || die "另一个发布正在进行，稍后再试"
+      ( cmd_add "$code" --git "$git" ${branch:+--branch "$branch"} ) || return 1
+      if ! ( cmd_up "$code" ); then
+        # 还没登记到控制台就失败了：清掉，方便改好仓库后重新安装；已登记的保留，在控制台里重新发布或移除
+        [ -n "$(env_get "$APPS/$code/.env" YH_CLIENT_ID)" ] || { rm -rf "$APPS/$code"; gray "  已清理 apps/${code}，修好后可以重新安装"; }
+        return 1
+      fi
+      history_add "$code" "成功" "$(git -C "$APPS/$code/src" rev-parse --short=7 HEAD 2>/dev/null)" "" "首次安装" "控制台"
+      ;;
+    DEPLOY) cmd_update "$code" "控制台";;
+    START) deploy_lock || die "另一个发布正在进行，稍后再试"; cmd_up "$code";;
+    STOP) cmd_down "$code";;
+    RESTART) cmd_restart "$code";;
+    REMOVE) deploy_lock || die "另一个发布正在进行，稍后再试"; cmd_remove "$code" --yes;;
+    LOGS) lines="$(echo "$params" | jq -r '.lines // 300')"; docker logs --tail "$lines" --timestamps "yh-$code" 2>&1;;
+    UPGRADE) # 平台升级：params.packageId 是控制台上传的更新包，没有就按 UPGRADE_URL 联网下载
+      pkg="$(echo "$params" | jq -r '.packageId // empty')"
+      cmd_upgrade --trigger 控制台 ${pkg:+--from-console "$pkg" --yes};;
+    UPGRADE_CHECK) upgrade_check;;
+    *) die "不认识的操作 $kind";;
+  esac
+}
+
+agent_ops() {
+  local resp id kind code params log rc n=0
+  while [ $n -lt 20 ]; do
+    n=$((n + 1))
+    deploy_locked && return 0 # 手动发布进行中，等它结束再领
+    resp="$(platform_api POST /api/platform/ops/claim)" || return 0
+    id="$(echo "$resp" | jq -r '.data.id // empty' 2>/dev/null)"
+    [ -n "$id" ] || return 0
+    kind="$(echo "$resp" | jq -r .data.kind)"; code="$(echo "$resp" | jq -r .data.appCode)"; params="$(echo "$resp" | jq -c '.data.params // {}')"
+    mkdir -p "$ROOT/backups/ops"; log="$ROOT/backups/ops/$(date +%Y%m%d-%H%M%S)-$id-$kind-$code.log"
+    echo "[$(date '+%F %T')] 操作 #$id $kind $code"
+    ( run_op "$kind" "$code" "$params" ) 2>&1 | nocolor > "$log"; rc=${PIPESTATUS[0]}
+    platform_api POST "/api/platform/ops/$id/finish?ok=$([ "$rc" = 0 ] && echo true || echo false)" \
+      -H 'Content-Type: text/plain; charset=utf-8' --data-binary "@$log" >/dev/null || red "  交回结果失败（控制台不可用？）"
+    echo "[$(date '+%F %T')] 操作 #$id $([ "$rc" = 0 ] && echo 成功 || echo 失败)"
+    report_status
+    find "$ROOT/backups/ops" -name '*.log' -mtime +30 -delete 2>/dev/null
+  done
+}
+
+cmd_agent() {
+  load_env
+  echo "[$(date '+%F %T')] yh agent 启动（控制台 ${PUBLIC_URL}，自动发布间隔 ${WATCH_INTERVAL:-120} 秒）"
+  local i=0
+  until docker info >/dev/null 2>&1; do i=$((i + 1)); [ $i -gt 60 ] && die "5 分钟内 Docker 没起来"; sleep 5; done
+  export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+  local now last_watch=0 last_report=0 last_check=0 last_public=0 ver
+  ver="$(platform_version)"
+  while :; do
+    now="$(date +%s)"
+    # 平台刚升级过（yh upgrade 或控制台里点的）：换成新版本的脚本接着跑
+    if [ "$(platform_version)" != "$ver" ] && ! deploy_locked; then
+      echo "[$(date '+%F %T')] 平台已从 $ver 更新到 $(platform_version)，重启 agent"
+      exec /bin/bash "$ROOT/yh" agent
+    fi
+    # 主循环自己不持锁：锁上是自己的 pid，说明是某个子 shell 被强杀后留下的
+    [ "$(cat "$ROOT/.deploy.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$ROOT/.deploy.lock"
+    if console_ok; then
+      agent_ops
+      if [ $((now - last_report)) -ge 30 ]; then report_status; report_platform; last_report="$now"; fi
+    fi
+    # 用更新包安装的机器：定时查一次有没有新版本（只查不装，装要管理员在控制台点或执行 yh upgrade）
+    if [ "$(platform_mode)" = "package" ] && [ -n "${UPGRADE_URL:-}" ] && [ $((now - last_check)) -ge "${UPGRADE_CHECK_INTERVAL:-21600}" ]; then
+      last_check="$now"
+      ( upgrade_check ) 2>&1 | nocolor
+    fi
+    if [ $((now - last_public)) -ge "$PUBLIC_WATCH_INTERVAL" ]; then
+      last_public="$now"
+      ( public_watch ) 2>&1 | nocolor
+    fi
+    if [ $((now - last_watch)) -ge "${WATCH_INTERVAL:-120}" ]; then
+      last_watch="$now"
+      is_test || self_update agent # 有新版本：自更新后重启 agent（exec，不会回到这里）
+      ( cmd_watch --no-self ) 2>&1 | nocolor
+    fi
+    sleep 4
+  done
+}
+
+# ---------------------------------------------------------------- 公网入口巡检
+# agent 每 5 分钟从外面访问一次平台入口（配了应用域名也看它）：连续 2 次不通发通知，恢复了再发一次。
+# 平台机器自己关机 / 断网时这里发不出去——那种情况靠云服务器上的 cloud/healthcheck.sh（cloud/install.sh 带 ALERT_WEBHOOK 时装好）
+PUBLIC_WATCH_INTERVAL=300
+public_targets() { # 每行「名称 地址 期望」：200 = 要返回 HTTP 200；apps = 要带应用域名站点的 X-Yh-Apps 头
+  echo "平台入口 $PUBLIC_URL/health 200"
+  if apps_mode; then echo "应用域名 $APPS_URL/ apps"; fi
+}
+public_probe() { # public_probe <地址> <期望>
+  if [ "$2" = apps ]; then curl -s -o /dev/null -D - --max-time 15 "$1" 2>/dev/null | grep -qi '^x-yh-apps:'
+  else [ "$(curl -s -o /dev/null --max-time 15 -w '%{http_code}' "$1" 2>/dev/null)" = 200 ]; fi
+}
+public_watch() {
+  is_test && return 0
+  case "$PUBLIC_URL" in ""|*://localhost|*://localhost[:/]*|*://127.*) return 0;; esac # 只在本机访问的实例不巡检
+  local f="$ROOT/backups/.public-watch" tmp now name url want line st fails since
+  now="$(date +%s)"; mkdir -p "$ROOT/backups"; touch "$f"; tmp="$f.tmp"; : > "$tmp"
+  # 状态文件每行：名称|ok 或 down|连续失败次数|进入当前状态的时间
+  while read -r name url want; do
+    line="$(grep -F "$name|" "$f" | head -1)"
+    st="$(echo "$line" | cut -d'|' -f2)"; fails="$(echo "$line" | cut -d'|' -f3)"; since="$(echo "$line" | cut -d'|' -f4)"
+    st="${st:-ok}"; fails="${fails:-0}"; since="${since:-$now}"
+    if public_probe "$url" "$want"; then
+      if [ "$st" = down ]; then
+        notify "✅ ${name}恢复了" "#### ✅ ${name}恢复了\n\n- 地址：$url\n- 中断了约 $(( (now - since + 59) / 60 )) 分钟"
+        echo "[$(date '+%F %T')] ${name}恢复：$url"
+      fi
+      st=ok; fails=0; since="$now"
+    else
+      fails=$((fails + 1))
+      if [ "$st" != down ] && [ "$fails" -ge 2 ]; then
+        notify "🔴 ${name}从公网打不开" "#### 🔴 ${name}从公网打不开\n\n- 地址：$url\n- 已连续 ${fails} 次（每 5 分钟查一次）\n- 平台机器在运行，问题多半在隧道、云服务器或 DNS：在平台机器上执行 yh doctor"
+        echo "[$(date '+%F %T')] ${name}打不开：$url"
+        st=down; since="$now"
+      fi
+    fi
+    echo "$name|$st|$fails|$since" >> "$tmp"
+  done <<EOF
+$(public_targets)
+EOF
+  mv "$tmp" "$f"
+}
+cmd_public_check() { # 手动巡检一次并打印结果（agent 会自动每 5 分钟做）
+  load_env
+  public_watch
+  local name st fails
+  while IFS='|' read -r name st fails _; do
+    [ -n "$name" ] || continue
+    if [ "$st" = ok ] && [ "$fails" = 0 ]; then green "  ✓ $name"; else red "  ✗ ${name}（连续失败 ${fails} 次$( [ "$st" = down ] && echo '，已发通知')）"; fi
+  done < "$ROOT/backups/.public-watch" 2>/dev/null
+}
+
+# ---------------------------------------------------------------- status / doctor
+cmd_status() {
+  load_env
+  printf '%-14s %-10s %-9s %-10s %-8s %s\n' "应用" "容器" "内存" "健康" "版本" "地址"
+  local st hc
+  st="$(docker inspect -f '{{.State.Status}}' yh-console 2>/dev/null || echo '未部署')"
+  console_ok && hc="正常" || hc="异常"
+  printf '%-14s %-10s %-9s %-10s %-8s %s\n' "console" "$st" "$(docker stats --no-stream --format '{{.MemUsage}}' yh-console 2>/dev/null | cut -d/ -f1 | tr -d ' ')" "$hc" \
+    "$(if [ "$(platform_mode)" = "git" ]; then git -C "$ROOT" rev-parse --short=7 HEAD 2>/dev/null || echo -; else platform_version; fi)" "$PUBLIC_URL"
+  echo "$(status_json)" | jq -r '.[] | [.code, .state, (if .memory == "" then "-" else .memory end), (if .health == "ok" then "正常" elif .health == "stopped" then "已停用" else "异常(" + .health + ")" end), (if .version == "" then "-" else .version end)] | @tsv' \
+    | while IFS=$'\t' read -r c s mem h v; do printf '%-14s %-10s %-9s %-10s %-8s %s\n' "$c" "$s" "$mem" "$h" "$v" "$(app_url "$c")/"; done
+  echo
+  gray "平台：$(docker ps --filter name=yh- --format '{{.Names}}' | grep -E 'caddy|mysql|redis|frpc' | tr '\n' ' ')"
+  if [ -d "$ROOT/.deploy.lock" ] && deploy_locked; then gray "发布进行中（pid $(cat "$ROOT/.deploy.lock/pid")）"; fi
+}
+
+cmd_doctor() {
+  load_env
+  local ok=0
+  chk() { if eval "$2" >/dev/null 2>&1; then green "  ✓ $1"; else red "  ✗ $1 —— $3"; ok=1; fi; }
+  step "运行环境"
+  chk "Docker 运行中" "docker info" "macOS：colima start"
+  chk "网络 yh-net" "docker network inspect yh-net" "yh start"
+  step "平台"
+  chk "Caddy" "docker ps --filter name=^yh-caddy$ --filter status=running -q | grep ." "yh start"
+  chk "MySQL" "docker exec yh-mysql mysqladmin ping -uroot -p$MYSQL_ROOT_PASSWORD --silent" "docker logs yh-mysql"
+  chk "Redis" "docker exec yh-redis redis-cli ping" "yh start"
+  chk "控制台" "console_ok" "yh logs console"
+  if [ "$(uname)" = "Darwin" ]; then
+    chk "常驻 agent（控制台操作、自动发布）" "launchctl print gui/$(id -u)/one.yihu.agent" "yh autostart"
+  else
+    chk "常驻 agent（控制台操作、自动发布）" "systemctl is-active --quiet yh-agent" "yh autostart"
+  fi
+  if [ -n "${FRP_TOKEN:-}" ] && [ -n "${FRP_SERVER_ADDR:-}" ] && ! is_test; then
+    chk "隧道客户端 frpc" "docker ps --filter name=^yh-frpc$ --filter status=running -q | grep ." "yh start"
+    chk "隧道已连上云端" "docker logs --tail 50 yh-frpc 2>&1 | grep -q 'start proxy success'" "检查 FRP_SERVER_ADDR、FRP_TOKEN 与云端一致、安全组放行 ${FRP_SERVER_PORT:-7000}"
+    # 额外隧道：逐条看「在云端登记上了没有」「内网那个服务连得上吗」「公网域名打得开吗」
+    if [ -n "${EXTRA_TUNNELS:-}" ]; then
+      local td th tp tn turl
+      chk "EXTRA_TUNNELS 配置" "extra_tunnels" "有写错的条目（已跳过），执行 yh start 看具体是哪条"
+      extra_tunnels 2>/dev/null > "$ROOT/backups/.tunnels.tmp"
+      while read -r td th tp; do
+        tn="$(extra_tunnel_name "$td")"
+        turl="$(echo "$PUBLIC_URL" | sed -E 's#^([a-z]+://).*#\1#')$td$(echo "$PUBLIC_URL" | sed -nE 's#^[a-z]+://[^/:]+(:[0-9]+).*#\1#p')"
+        chk "额外隧道 ${td}：已在云端登记" "docker logs yh-frpc 2>&1 | grep -F '[$tn] start ' | tail -1 | grep -q 'start proxy success'" \
+          "改了 EXTRA_TUNNELS 要 yh start 才生效；域名被别的隧道客户端占了也会失败：docker logs yh-frpc 2>&1 | grep $tn"
+        chk "额外隧道 ${td}：内网服务 $th:$tp 连得上" "docker exec yh-frpc nc -z -w 3 $th $tp" \
+          "服务没在运行，或没监听在容器访问得到的地址：先在这台机器上 curl http://127.0.0.1:$tp 确认"
+        chk "额外隧道 ${td}：公网访问 $turl" "[ \"\$(curl -s -o /dev/null --max-time 15 -w '%{http_code}' $turl/ | grep -vE '^(000|404|502|503|504)\$')\" != '' ]" \
+          "云服务器的 Caddy 没放行这个域名（证书签不下来）或没转给 frps，见 docs/发布方式.md「把内网独立服务挂到子域名」；服务自己返回 404 也会报这个"
+      done < "$ROOT/backups/.tunnels.tmp"
+      rm -f "$ROOT/backups/.tunnels.tmp"
+    fi
+  fi
+  if ! is_test; then
+    chk "公网访问 $PUBLIC_URL" "curl -fsS --max-time 15 $PUBLIC_URL/health" "域名是否解析到入口服务器、云端 install.sh 是否执行"
+  fi
+  if apps_mode; then
+    # 应用域名的站点会带 X-Yh-Apps 响应头：本机看路由配上了没有，公网看 DNS / 证书 / 隧道通没通
+    chk "应用域名 $(apps_host)：本机路由" "curl -s -o /dev/null -D - --max-time 5 -H 'Host: $(apps_host)' $LOCAL/ | grep -qi '^x-yh-apps:'" "yh start"
+    chk "应用域名：控制台不在这个域名上" "[ \"\$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' -H 'Host: $(apps_host)' $LOCAL/api/me)\" = 404 ]" "yh start（Caddy 配置没更新）"
+    is_test || chk "公网访问 $APPS_URL" "curl -s -o /dev/null -D - --max-time 15 $APPS_URL/ | grep -qi '^x-yh-apps:'" "应用域名是否解析到入口服务器、云端 install.sh 是否带 APPS_DOMAIN 执行过"
+  fi
+  step "应用"
+  local d c m
+  for d in "$APPS"/*/; do
+    [ -d "$d" ] || continue
+    c="$(basename "$d")"; m="$(manifest "$c")"; [ -n "$m" ] || continue
+    [ -f "$d/.stopped" ] && { gray "  - $c 已停用"; continue; }
+    chk "$c 健康检查" "[ \"\$(app_http $c $(mf "$m" .health))\" = 200 ]" "yh logs $c"
+  done
+  step "资源"
+  gray "  $(docker system df --format '{{.Type}} {{.Size}}' | tr '\n' ' ')"
+  gray "  磁盘剩余 $(df -h "$ROOT" | awk 'NR==2{print $4}')"
+  return $ok
+}
+
+# ---------------------------------------------------------------- backup / restore
+cmd_backup() {
+  load_env
+  local ts dir c dbs
+  ts="$(date +%Y%m%d-%H%M%S)"; dir="$ROOT/backups/$ts"
+  mkdir -p "$dir"; chmod 700 "$ROOT/backups" "$dir"
+  step "备份到 backups/$ts"
+  dbs="$(mysql_root -N -e "SHOW DATABASES WHERE \`Database\` LIKE 'app\\_%' OR \`Database\` = 'yh_console'")"
+  for c in $dbs; do
+    docker exec yh-mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --no-tablespaces "$c" 2>/dev/null | gzip > "$dir/$c.sql.gz"
+    green "  数据库 ${c}（$(du -h "$dir/$c.sql.gz" | cut -f1)）"
+  done
+  # 数据目录 + 各应用 .env（含密钥，恢复时必须有）+ 平台配置
+  # shellcheck disable=SC2046
+  tar -czf "$dir/files.tar.gz" -C "$ROOT" yh.env $(cd "$ROOT" && ls -d apps/*/data apps/*/.env apps/*/.source apps/*/yh-app.json 2>/dev/null) 2>/dev/null
+  green "  数据目录与配置（$(du -h "$dir/files.tar.gz" | cut -f1)）"
+  find "$ROOT/backups" -mindepth 1 -maxdepth 1 -type d -name '2*' -mtime +"${BACKUP_KEEP_DAYS:-14}" -exec rm -rf {} + 2>/dev/null
+  if [ -n "${BACKUP_REMOTE:-}" ]; then
+    rsync -az "$dir" "$BACKUP_REMOTE/" && green "  已同步异地：$BACKUP_REMOTE" || red "  异地同步失败"
+  fi
+  green "✅ 备份完成"
+}
+
+cmd_restore() {
+  local code="${1:-}" file="${2:-}" dbname; load_env
+  if [ "$code" = "console" ]; then dbname="yh_console"; else valid_code "$code"; dbname="app_${code//-/_}"; fi
+  [ -f "$file" ] || die "备份文件不存在：$file"
+  printf '将用 %s 覆盖数据库 %s，确认请输入 %s：' "$file" "$dbname" "$code"; read -r ans
+  [ "$ans" = "$code" ] || die "已取消"
+  mysql_root -e "CREATE DATABASE IF NOT EXISTS \`$dbname\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+  case "$file" in *.gz) gunzip -c "$file";; *) cat "$file";; esac | mysql_root "$dbname" || die "导入失败"
+  green "✅ 已恢复 ${dbname}；执行 yh restart $code"
+}
+
+# ---------------------------------------------------------------- 开机自启 / 常驻 agent / 定时备份
+cmd_autostart() {
+  load_env
+  local log="$ROOT/backups/boot.log"
+  mkdir -p "$ROOT/backups"
+  if [ "$(uname)" = "Darwin" ]; then
+    local la="$HOME/Library/LaunchAgents" path_env="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    mkdir -p "$la"
+    plist() { # plist <label> <yh 子命令> <额外 key>
+      cat > "$la/$1.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$1</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$ROOT/yh</string><string>$2</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$path_env</string></dict>
+  $3
+  <key>StandardOutPath</key><string>$4</string>
+  <key>StandardErrorPath</key><string>$4</string>
+</dict></plist>
+EOF
+    }
+    # 登录后：等 Docker（Colima）起来，再启动平台和所有应用
+    plist one.yihu.boot boot "<key>RunAtLoad</key><true/>" "$log"
+    # 常驻 agent：挂了 launchd 自动拉起
+    plist one.yihu.agent agent "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>20</integer>" "$ROOT/backups/agent.log"
+    # 每晚 02:30 备份
+    plist one.yihu.backup backup "<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>" "$log"
+    plutil -lint "$la"/one.yihu.*.plist >/dev/null || die "plist 格式错误"
+    local l
+    for l in one.yihu.boot one.yihu.agent one.yihu.backup; do
+      launchctl bootout "gui/$(id -u)/$l" >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$la/$l.plist" || die "加载 $l 失败"
+    done
+    green "✅ 已安装：登录后自动启动平台；agent 常驻（日志 backups/agent.log）；每晚 02:30 备份"
+    gray "   前提：Colima 开机自启（brew services start colima），且这个用户开启了自动登录"
+  else
+    [ "$(id -u)" = "0" ] || die "Linux 上需要 root 安装 systemd 服务：sudo ./yh autostart"
+    command -v systemctl >/dev/null || die "没有 systemd，请自行配置开机执行 yh boot、常驻 yh agent"
+    local u; u="$(stat -c %U "$ROOT")"
+    unit() { # unit <名称> <说明> <yh 子命令> <类型>
+      cat > "/etc/systemd/system/$1.service" <<EOF
+[Unit]
+Description=$2
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=$4
+User=$u
+ExecStart=/bin/bash $ROOT/yh $3
+$( [ "$4" = "simple" ] && printf 'Restart=always\nRestartSec=20' )
+StandardOutput=append:$ROOT/backups/$3.log
+StandardError=append:$ROOT/backups/$3.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    }
+    unit yh-boot "以虎 One 平台启动" boot oneshot
+    unit yh-agent "以虎 One agent（控制台操作、自动发布）" agent simple
+    unit yh-backup "以虎 One 备份" backup oneshot
+    cat > /etc/systemd/system/yh-backup.timer <<EOF
+[Unit]
+Description=以虎 One 每晚备份
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl daemon-reload
+    systemctl enable -q yh-boot.service yh-agent.service yh-backup.timer
+    systemctl restart yh-agent.service; systemctl start yh-backup.timer
+    green "✅ 已安装 systemd 服务：yh-boot（开机启动平台）、yh-agent（常驻）、yh-backup.timer（每晚 02:30）"
+  fi
+}
+
+# 开机时调用：最多等 5 分钟 Docker 就绪
+cmd_boot() {
+  echo "[$(date '+%F %T')] boot"
+  local i=0
+  until docker info >/dev/null 2>&1; do
+    i=$((i + 1)); [ $i -gt 60 ] && die "5 分钟内 Docker 没起来"
+    sleep 5
+  done
+  cmd_start
+}
+
+# ---------------------------------------------------------------- 清空（测试转生产用）
+cmd_destroy() {
+  [ -f "$ENV_FILE" ] && load_env
+  red "将删除本机平台的全部容器、数据库（含控制台的用户和配置）、数据目录、应用密钥和备份（代码仓库不受影响）"
+  printf '确认请输入 destroy：'; read -r ans
+  [ "$ans" = "destroy" ] || die "已取消"
+  if [ "$(uname)" = "Darwin" ]; then
+    local l; for l in one.yihu.boot one.yihu.agent one.yihu.backup; do launchctl bootout "gui/$(id -u)/$l" >/dev/null 2>&1; rm -f "$HOME/Library/LaunchAgents/$l.plist"; done
+  fi
+  local c
+  for c in $(docker ps -aq --filter name=^yh-); do docker rm -f "$c" >/dev/null; done
+  docker volume rm yh-platform_mysql-data yh-platform_caddy-data >/dev/null 2>&1
+  docker network rm yh-net >/dev/null 2>&1
+  for c in $(docker network ls --format '{{.Name}}' | grep '^yh-app-'); do docker network rm "$c" >/dev/null 2>&1; done
+  for c in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^yh-(app-|console)'); do docker rmi "$c" >/dev/null 2>&1; done
+  rm -rf "$ENV_FILE" "$PLATFORM/frpc.toml" "$PLATFORM/console.env" "$PLATFORM"/caddy/apps/*.caddy "$PLATFORM"/caddy/apps/*.app "$PLATFORM"/caddy/apps/*.site "$ROOT"/backups/2* "$ROOT"/backups/*.log "$ROOT"/backups/ops "$ROOT"/backups/deploy "$ROOT"/backups/removed "$ROOT"/backups/deploy-history.tsv "$ROOT/.deploy.lock"
+  find "$APPS" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+  green "✅ 已清空，可重新 yh init"
+}
+
+# ---------------------------------------------------------------- 入口
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  init) cmd_init "$@";;
+  start) cmd_start;;
+  new) cmd_new "$@";;
+  add) cmd_add "$@";;
+  up) cmd_up "$@";;
+  update) cmd_update "${1:-}" 手动;;
+  down) cmd_down "$@";;
+  remove) cmd_remove "$@";;
+  restart) cmd_restart "$@";;
+  logs) cmd_logs "$@";;
+  status) cmd_status;;
+  agent) cmd_agent;;
+  watch) cmd_watch "$@";;
+  public-check) cmd_public_check;;
+  upgrade) cmd_upgrade "$@";;
+  version|--version|-v) v="$(platform_version)"
+    case "$v" in 0.*) echo "以虎 One v${v} Beta（$(platform_mode) 安装）";; *) echo "以虎 One v${v}（$(platform_mode) 安装）";; esac;;
+  history) cmd_history "$@";;
+  passwd) cmd_passwd "$@";;
+  notify-test) load_env
+    notify "以虎 One 发布通知测试" "#### 以虎 One 发布通知测试\n\n以后平台升级、应用自动发布的结果会发到这个群。"
+    green "已尝试发送（失败会在上方提示）。机器人在控制台「系统设置 → 发布通知」里配置；没配任何机器人时只写 backups/notify.log";;
+  doctor) cmd_doctor;;
+  backup) cmd_backup;;
+  restore) cmd_restore "$@";;
+  db) cmd_db "$@";;
+  autostart) cmd_autostart;;
+  destroy) cmd_destroy;;
+  boot) cmd_boot;;
+  *) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//';;
+esac

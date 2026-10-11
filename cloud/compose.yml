@@ -1,0 +1,15 @@
+# 云服务器：隧道服务端 frps（平台机器在内网、没有公网 IP 时才需要）
+# 7000：平台机器的 frpc 连进来（安全组要放行 TCP 7000）
+# 7080：HTTP 虚拟主机，只给本机 Caddy 转发用，不对外
+name: yh-cloud
+services:
+  frps:
+    image: ${IMAGE_MIRROR:-}snowdreamtech/frps:0.61.1
+    container_name: yh-frps
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+      - "127.0.0.1:7080:7080"
+    volumes:
+      - ./frps.toml:/etc/frp/frps.toml:ro
+    mem_limit: 64m

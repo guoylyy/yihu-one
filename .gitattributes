@@ -1,0 +1,5 @@
+# 平台更新包（scripts/pack.sh 用 git archive 导出）里不带的文件：只给发布方 / 以虎内部用
+CLAUDE.md export-ignore
+release.sh export-ignore
+scripts/pack.sh export-ignore
+scripts/push-console-image.sh export-ignore

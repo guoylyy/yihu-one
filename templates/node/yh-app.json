@@ -1,0 +1,20 @@
+{
+  "code": "__CODE__",
+  "name": "__NAME__",
+  "icon": "🧩",
+  "category": "工具",
+  "description": "",
+  "port": 3000,
+  "health": "/health",
+  "callback": "/sso/callback",
+  "mcp": "/mcp",
+  "database": false,
+  "memory": "256m",
+  "visibility": null,
+  "isDefault": false,
+  "env": {},
+  "deploy": {
+    "branch": "release",
+    "mode": "auto"
+  }
+}

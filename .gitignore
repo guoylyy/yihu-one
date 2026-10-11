@@ -1,0 +1,18 @@
+# 密钥与生成的配置（yh.env.example 是模板，入库）
+yh.env
+platform/console.env
+.env
+!.env.example
+
+# 运行数据：应用、备份、更新包（见 README「目录」）
+/apps/*
+!/apps/.gitkeep
+/backups/*
+!/backups/.gitkeep
+/dist/
+/platform/caddy/apps/*.caddy
+/platform/caddy/apps/*.app
+/platform/caddy/apps/*.site
+
+node_modules/
+.DS_Store

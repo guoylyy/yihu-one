@@ -1,0 +1,171 @@
+:root {
+  /* 设计令牌（VI）：下面是默认「以虎科技 VI」的值，由 utils/theme.js 的 deriveVars 生成；
+     后台「外观与主题」/ 空间 VI 改了之后由 utils/theme.js 整组覆盖。写样式只用这些变量，不要写死颜色 */
+  --yh-primary: #1c1917;
+  --yh-primary-rgb: 28, 25, 23;
+  --yh-primary-dark: #454241;
+  --yh-primary-deep: #1c1917;
+  --yh-primary-light: #6b6a68;
+  --yh-primary-soft: #e8e8e8;
+  --yh-on-primary: #faf9f7;
+  --yh-highlight: #d2521e;
+  --yh-highlight-rgb: 210, 82, 30;
+  --yh-highlight-soft: #fbeee9;
+  --yh-accent: #d2521e;
+  --yh-accent-light: #e28f6d;
+  --yh-accent-deep: #1c1917;
+  --yh-glow: #77361b;
+  --yh-glow-rgb: 119, 54, 27;
+  --yh-gradient: var(--yh-primary);
+  --yh-hero: #1c1917;
+  --yh-hero-ai: #1c1917;
+  --yh-glow-shadow: 0 4px 14px rgba(28, 25, 23, .18);
+  --yh-ai: #b9481a;
+  --yh-ai-soft: #fcf3ef;
+  --yh-bg: #faf9f7;
+  --yh-card: #ffffff;
+  --yh-card-rgb: 255, 255, 255;
+  --yh-sidebar: #faf9f7;
+  --yh-hover: #f0efed;
+  --yh-fill: #f9f9f9;
+  --yh-fill-2: #f4f4f3;
+  --yh-fill-3: #eae9e7;
+  --yh-border: #eae7e2;
+  --yh-border-soft: #f1efec;
+  --yh-border-strong: #dad7d2;
+  --yh-text: #1c1917;
+  --yh-text-2: #5c574f;
+  --yh-text-3: #8f8a82;
+  --yh-danger: #c2362b;
+  --yh-success: #2e7d4f;
+  --yh-warning: #b3450f;
+  --yh-radius: 12px;
+  --yh-radius-sm: 8px;
+  --yh-shadow: none;
+  --yh-shadow-lg: 0 8px 24px rgba(28, 25, 23, 0.08);
+  --yh-font: 'Manrope Variable', 'Manrope', 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --yh-font-num: 'Manrope Variable', 'Manrope', system-ui, sans-serif;
+  --yh-nav-active-bg: #1c1917;
+  --yh-nav-active-color: #faf9f7;
+  --yh-nav-tick: #d2521e;
+  --el-color-primary: #1c1917;
+  --el-color-primary-light-3: #605e5d;
+  --el-color-primary-light-5: #8e8c8b;
+  --el-color-primary-light-7: #bbbab9;
+  --el-color-primary-light-8: #d2d1d1;
+  --el-color-primary-light-9: #e8e8e8;
+  --el-color-primary-dark-2: #454241;
+  --el-color-success: #2e7d4f;
+  --el-color-success-light-9: #eaf2ed;
+  --el-color-warning: #b3450f;
+  --el-color-warning-light-9: #f7ece7;
+  --el-color-danger: #c2362b;
+  --el-color-danger-light-9: #f9ebea;
+  --el-color-error: #c2362b;
+  --el-color-error-light-9: #f9ebea;
+  --el-text-color-primary: #1c1917;
+  --el-text-color-regular: #5c574f;
+  --el-text-color-secondary: #8f8a82;
+  --el-text-color-placeholder: #8f8a82;
+  --el-border-color: #eae7e2;
+  --el-border-color-light: #efede9;
+  --el-border-color-lighter: #f3f2ef;
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-bg-color-page: #faf9f7;
+  --el-fill-color-light: #f7f7f7;
+  --el-fill-color-lighter: #fafafa;
+  --el-border-radius-base: 8px;
+  --el-font-family: 'Manrope Variable', 'Manrope', 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --yh-sidebar-w: 216px;
+  --yh-header-h: 56px;
+  --yh-tabbar-h: 58px;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+body {
+  background: var(--yh-bg);
+  color: var(--yh-text);
+  font-family: var(--yh-font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: var(--yh-highlight); text-decoration: none; }
+
+/* VI：链接、文字按钮用强调色（以虎 VI 是虎橙）；数字用 Manrope */
+.el-button--primary.is-link, .el-button--primary.is-text, .el-link.el-link--primary {
+  --el-button-text-color: var(--yh-highlight);
+  --el-button-hover-link-text-color: var(--yh-highlight);
+  --el-link-text-color: var(--yh-highlight);
+  --el-link-hover-text-color: var(--yh-highlight);
+}
+.el-button--primary.is-link:not(.is-disabled):hover, .el-button--primary.is-text:not(.is-disabled):hover { opacity: .8; }
+.el-tabs__active-bar { background-color: var(--yh-highlight); }
+.yh-num { font-family: var(--yh-font-num); font-variant-numeric: tabular-nums; }
+
+/* ---------- 通用组件 ---------- */
+.yh-page { padding: 24px; max-width: 1280px; margin: 0 auto; }
+.yh-page-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+}
+.yh-page-title { font-size: 20px; font-weight: 600; margin: 0; }
+.yh-page-sub { color: var(--yh-text-3); font-size: 13px; margin-top: 4px; }
+
+.yh-card {
+  background: var(--yh-card);
+  border: 1px solid var(--yh-border-soft);
+  border-radius: var(--yh-radius);
+  box-shadow: var(--yh-shadow);
+  padding: 20px;
+}
+.yh-card + .yh-card { margin-top: 16px; }
+.yh-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px; gap: 8px;
+}
+.yh-card-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.yh-card-title .count { color: var(--yh-text-3); font-weight: 400; font-size: 13px; }
+.yh-link { color: var(--yh-primary); cursor: pointer; font-size: 13px; }
+.yh-link:hover { text-decoration: underline; }
+
+.yh-empty { color: var(--yh-text-3); text-align: center; padding: 28px 0; font-size: 13px; }
+.yh-muted { color: var(--yh-text-3); }
+.yh-danger-text { color: var(--yh-danger); }
+.yh-flex { display: flex; align-items: center; gap: 8px; }
+.yh-grow { flex: 1; min-width: 0; }
+.yh-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.yh-tag-ai {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px;
+  background: var(--yh-ai-soft); color: var(--yh-ai); border: 1px solid #ddd6fe;
+  white-space: nowrap;
+}
+.yh-tag-mcp { background: #ecfeff; color: #0e7490; border-color: #a5f3fc; }
+
+/* 列表行 */
+.yh-list-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 10px; border-radius: var(--yh-radius-sm); cursor: pointer;
+  transition: background .15s;
+}
+.yh-list-item:hover { background: var(--yh-fill); }
+.yh-list-item + .yh-list-item { border-top: 1px solid var(--yh-border-soft); }
+
+/* 无加减按钮的数字输入框左对齐（表单里更自然） */
+.el-input-number.is-without-controls .el-input__inner { text-align: left; }
+
+.el-table { --el-table-header-bg-color: var(--yh-fill); }
+.el-table th.el-table__cell { font-weight: 500; color: var(--yh-text-2); }
+
+@media (max-width: 767px) {
+  .yh-page { padding: 14px 12px; }
+  .yh-page-title { font-size: 18px; }
+  .yh-card { padding: 16px 14px; border-radius: 10px; }
+  .el-dialog { width: 92vw !important; }
+  .el-message-box { width: 88vw !important; }
+}

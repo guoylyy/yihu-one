@@ -1,0 +1,24 @@
+# 平台入口：/apps/<code>/ 分给各应用容器，其余都给控制台
+# TLS 在前面（云服务器 Caddy / 公司网关）终止，这里只跑 HTTP；每个应用一段路由在 caddy/apps/<code>.caddy（yh 生成）
+{
+	auto_https off
+	servers {
+		# 请求经 云 Caddy → frps → frpc 进来，保留原始的 X-Forwarded-*（协议是 https、客户端 IP）
+		trusted_proxies static private_ranges
+	}
+}
+
+:80 {
+	encode gzip
+	import /etc/caddy/apps/*.caddy
+	handle {
+		reverse_proxy yh-console:3105 {
+			# AI 助手是 SSE 流式输出，不能缓冲
+			flush_interval -1
+		}
+	}
+}
+
+# 应用独立域名（yh.env 配了 APPS_URL 时由 yh 生成 caddy/apps/apps.site）：应用只在那个域名下，和控制台不同源。
+# 没配时没有这个文件，应用照旧挂在上面的 /apps/<code>/ 下
+import /etc/caddy/apps/*.site

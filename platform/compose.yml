@@ -1,0 +1,90 @@
+# 平台：入口 Caddy + 控制台 + 共用 MySQL + 共用 Redis + 隧道客户端 frpc
+# 由 yh 管理：yh init / yh start；不要直接改这里的容器名（应用通过名字互相访问）
+name: yh-platform
+
+services:
+  caddy:
+    # IMAGE_MIRROR（yh.env）：Docker Hub 拉不动时的镜像前缀，如 docker.m.daocloud.io/；留空走 Docker Hub
+    image: ${IMAGE_MIRROR:-}caddy:2-alpine
+    container_name: yh-caddy
+    restart: unless-stopped
+    ports:
+      # 生产：只给本机和隧道用（外部流量经 frpc 或前置反代进来）；局域网测试模式绑 0.0.0.0
+      - "${LOCAL_HTTP_BIND:-127.0.0.1}:${LOCAL_HTTP_PORT:-18080}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/apps:/etc/caddy/apps:ro
+      - caddy-data:/data
+    networks: [yh-net]
+    mem_limit: 128m
+
+  # 控制台：平台跑起来默认就是它（配置模型、登录、用户，插拔应用）。环境变量由 yh 按 yh.env 生成
+  console:
+    build:
+      context: ../console
+      args:
+        NODE_IMAGE: ${IMAGE_MIRROR:-}node:20-alpine
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        PRISMA_ENGINES_MIRROR: ${PRISMA_ENGINES_MIRROR:-}
+        OMIT_OPTIONAL: ${CONSOLE_OMIT_OPTIONAL:-}
+    image: yh-console:latest
+    container_name: yh-console
+    restart: unless-stopped
+    env_file: ./console.env
+    networks: [yh-net]
+    mem_limit: 512m
+
+  mysql:
+    image: ${IMAGE_MIRROR:-}mysql:8.0
+    container_name: yh-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command: >
+      --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+      --performance-schema=OFF --innodb-buffer-pool-size=256M
+      --max-connections=200 --skip-name-resolve
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks: [yh-net]
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      retries: 12
+
+  # 共用 Redis：应用各用一个库号（清单 env 里写 REDIS_URL=redis://yh-redis:6379/<n>），只放会话、临时凭证等可丢数据
+  redis:
+    image: ${IMAGE_MIRROR:-}redis:7-alpine
+    container_name: yh-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [yh-net]
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 6
+
+  frpc:
+    image: ${IMAGE_MIRROR:-}snowdreamtech/frpc:0.61.1
+    container_name: yh-frpc
+    restart: unless-stopped
+    volumes:
+      - ./frpc.toml:/etc/frp/frpc.toml:ro
+    networks: [yh-net]
+    # 额外隧道（EXTRA_TUNNELS）常指向宿主机上的服务：固定 host.docker.internal 指到宿主机（Linux 上默认没有这个名字）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: [caddy]
+    mem_limit: 64m
+    # 未配置隧道（FRP_SERVER_ADDR / FRP_TOKEN）或测试模式时 yh 不启动它
+    profiles: [tunnel]
+
+networks:
+  yh-net:
+    external: true
+
+volumes:
+  caddy-data:
+  mysql-data:
