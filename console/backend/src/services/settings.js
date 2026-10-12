@@ -65,7 +65,7 @@ export const SCHEMA = {
     page: 'login',
     // 字段名与钉钉开发者后台「应用 → 凭证与基础信息」一致; 该页的 App ID 不需要
     fields: {
-      clientId: { label: 'Client ID（原 AppKey）', type: 'text', env: 'DINGTALK_CLIENT_ID', default: '', help: '钉钉开发者后台 → 应用 → 凭证与基础信息，形如 ding8f6x…；同页的「App ID」不需要填' },
+      clientId: { label: 'Client ID（原 AppKey）', type: 'text', env: 'DINGTALK_CLIENT_ID', default: '', help: '钉钉开发者后台 → 应用 → 凭证与基础信息，形如 ding8f6x…；同页的「App ID」不需要填。要开的权限（通讯录个人信息读权限、成员信息读权限等）见开发中心 /dev/login-setup' },
       clientSecret: { label: 'Client Secret（原 AppSecret）', type: 'password', env: 'DINGTALK_CLIENT_SECRET', default: '', help: '同一页，点「查看」拿到完整值' },
       corpId: { label: 'CorpId（企业 ID）', type: 'text', env: 'DINGTALK_CORP_ID', default: '', help: '开发者后台首页右上角或「企业信息」里，ding 开头；钉钉内免登用' },
       bootstrapAdmins: { label: '钉钉管理员（userid）', type: 'list', default: [], help: '这些人钉钉登录后自动成为管理员。userid 在钉钉管理后台 → 通讯录 → 成员详情里' }
@@ -91,7 +91,7 @@ export const SCHEMA = {
     // 飞书开放平台 → 开发者后台 → 企业自建应用 → 凭证与基础信息
     fields: {
       appId: { label: 'App ID', type: 'text', default: '', help: '飞书开发者后台 → 企业自建应用 → 凭证与基础信息，cli_ 开头。应用要开启「网页应用」能力，「安全设置 → 重定向 URL」里加上 <访问地址>/auth/feishu/callback。**应用的「可用范围」要包含使用的人**：应用发布 → 版本管理与发布 → 可用范围选全员（或对应部门），不发布/范围没人时，其他人授权会被飞书拦下提示没有使用权限；临时验证可把人加为应用测试人员' },
-      appSecret: { label: 'App Secret', type: 'password', default: '', help: '同一页。权限管理里至少开通「获取用户基本信息」；要自动对上已有用户，再开通「获取用户手机号 / 邮箱」；要从飞书同步部门与人员，再开通「获取部门组织架构信息」「读取成员基本信息」等通讯录权限' },
+      appSecret: { label: 'App Secret', type: 'password', default: '', help: '同一页。权限管理里至少开通「获取用户基本信息」；要自动对上已有用户，再开通「获取用户手机号 / 邮箱」；要从飞书同步部门与人员，再开通通讯录权限并把通讯录权限范围设为全部成员。逐项清单见开发中心 /dev/login-setup' },
       bootstrapAdmins: { label: '飞书管理员（open_id 或手机号）', type: 'list', default: [], help: '这些人用飞书登录后自动成为管理员。优先填 open_id（ou_ 开头），不要填 union_id（on_ 开头）或 user_id——填错不会生效也不报错；也可以直接填手机号。open_id 在飞书开发者后台「API 调试台」选当前应用查询自己获得，或从飞书同步用户后在「用户与部门」里把鼠标悬停在飞书标签上看' }
     }
   },
@@ -102,8 +102,11 @@ export const SCHEMA = {
     fields: {
       corpId: { label: 'CorpID（企业 ID）', type: 'text', default: '', help: '企业微信管理后台 → 我的企业 → 企业信息，页面最下方的「企业ID」' },
       agentId: { label: 'AgentId', type: 'text', default: '', help: '应用管理 → 自建应用 → 你的应用，页面上的 AgentId' },
-      secret: { label: 'Secret', type: 'password', default: '', help: '同一页点「查看」。还要在应用里设置「网页授权及 JS-SDK」的可信域名和「企业微信授权登录」的授权回调域为访问地址的域名' },
-      bootstrapAdmins: { label: '企业微信管理员（userid 或手机号）', type: 'list', default: [], help: '这些人用企业微信登录后自动成为管理员。userid 在管理后台 → 通讯录 → 成员详情里（「账号」）' }
+      secret: { label: 'Secret', type: 'password', default: '', help: '同一页点「查看」。还要在应用里设置「网页授权及 JS-SDK」的可信域名、「企业微信授权登录」的授权回调域（都填访问地址的域名）和「企业可信 IP」（平台机器的出口 IP）。见开发中心 /dev/login-setup' },
+      bootstrapAdmins: { label: '企业微信管理员（userid 或手机号）', type: 'list', default: [], help: '这些人用企业微信登录后自动成为管理员。userid 在管理后台 → 通讯录 → 成员详情里（「账号」）' },
+      // 可信域名要求 https://<域名>/WW_verify_xxx.txt 能访问到企业微信给的验证文件：填在这里，平台直接在根路径返回
+      verifyFileName: { label: '可信域名验证文件名', type: 'text', default: '', help: '配置「网页授权及 JS-SDK → 可信域名」时企业微信要求下载的验证文件名，形如 WW_verify_abc123.txt。填上文件名和内容，保存后 https://<域名>/<文件名> 就能访问到，回企业微信点「验证」即可。完整配置见开发中心 /dev/login-setup' },
+      verifyFileContent: { label: '可信域名验证文件内容', type: 'text', default: '', help: '用文本编辑器打开下载的验证文件，把里面的一串字符原样粘贴过来' }
     }
   },
   llm: {
@@ -284,6 +287,19 @@ async function guardLogin() {
   await prisma.systemSetting.update({ where: { key: 'login' }, data: { value: { ...(await prisma.systemSetting.findUnique({ where: { key: 'login' } })).value, password: true } } })
   cache = null
   throw badRequest('至少要保留一种可用的登录方式：钉钉 / 飞书 / 企业微信都没有配好并打开时，不能关闭账号密码登录')
+}
+
+/** 企业微信可信域名验证文件：文件名对得上才返回内容（只认 WW_verify_*.txt），否则 null */
+export async function domainVerifyFile(name) {
+  if (!VERIFY_NAME.test(name || '')) return null
+  return matchVerifyFile(name, await get('wecom'))
+}
+const VERIFY_NAME = /^WW_verify_[A-Za-z0-9]{1,64}\.txt$/
+/** 纯函数，便于测试：w = 企业微信设置组 */
+export function matchVerifyFile(name, w) {
+  if (!VERIFY_NAME.test(name || '')) return null
+  const content = String(w?.verifyFileContent || '').trim()
+  return String(w?.verifyFileName || '').trim() === name && content && content.length <= 200 ? content : null
 }
 
 /** 前端启动时要的公开配置(不含任何密钥) */

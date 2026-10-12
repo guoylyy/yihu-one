@@ -24,6 +24,7 @@ import kbRouter from './routes/kb.js'
 import { oidcRouter, discoveryHandler } from './routes/oidc.js'
 import assetsRouter, { downloadHandler as assetDownload } from './routes/assets.js'
 import { startKbWorker } from './services/kbdoc.js'
+import * as settings from './services/settings.js'
 
 // 出网（模型、钉钉等）：Node 默认 IPv6/IPv4 竞速、每个地址只等 250ms，容器里 IPv6 不通且对端延迟稍高时会直接 ETIMEDOUT。
 // 改为优先 IPv4、按 DNS 顺序直连（纯 IPv6 的地址照样能连）
@@ -39,6 +40,14 @@ mountMcp(app)
 app.use(express.json({ limit: '2mb' }))
 
 app.get('/health', (req, res) => res.json({ ok: true }))
+// 企业微信「可信域名」验证文件（「登录方式 → 企业微信应用」里填），要在域名根目录下能访问到
+app.get(/^\/(WW_verify_[A-Za-z0-9]{1,64}\.txt)$/, async (req, res, next) => {
+  try {
+    const content = await settings.domainVerifyFile(req.params[0])
+    if (!content) return res.status(404).type('text/plain').send('not found')
+    res.type('text/plain').send(content)
+  } catch (e) { next(e) }
+})
 
 // 公开 / 应用凭证
 app.use('/api/auth', authRouter)

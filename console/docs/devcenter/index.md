@@ -43,7 +43,7 @@ updated: 2026-09-30
 ## 文档目录
 
 **入门**：[创作中心](/dev/studio) · [快速开始](/dev/quickstart) · [应用部署规范](/dev/deploy) · [用 Agent 发布](/dev/agent-publish) · [上线检查清单](/dev/checklist)
-**身份与认证**：[统一认证 SSO](/dev/sso) · [用户主数据](/dev/users) · [现成系统接入（标准 OIDC）](/dev/oidc)
+**身份与认证**：[登录方式配置（钉钉 / 飞书 / 企业微信）](/dev/login-setup) · [统一认证 SSO](/dev/sso) · [用户主数据](/dev/users) · [现成系统接入（标准 OIDC）](/dev/oidc)
 **应用能力**：[使用数据](/dev/usage) · [接入 AI 助手（MCP）](/dev/mcp) · [接入大模型](/dev/llm) · [轻应用 SDK](/dev/lite) · [Skill 中心](/dev/skills) · [资料中心](/dev/assets)
 **SDK 与示例**：[Python SDK](/dev/sdk-python) · [Node SDK](/dev/sdk-node)
 **参考**：[错误与常见问题](/dev/faq) · [变更记录](/dev/changelog)
