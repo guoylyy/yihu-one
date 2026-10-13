@@ -3,13 +3,14 @@ title: 变更记录
 category: 参考
 order: 61
 summary: 开发中心与接入接口的变化
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 # 变更记录
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-13 | **AI 助手工具分流**：平台工具加上用户能看到的应用工具超过 60 个时，内置 AI 助手对工具多的应用改用 `find_app_tools` / `call_app_tool` 先查后调（模型一次能接的工具有上限，OpenAI 兼容接口一般 128 个），确认卡片和审计不变；MCP 接口照常返回全部工具。工具的 `description` 写上用户会说的关键词才查得到，只读工具记得标 `readOnlyHint: true`，见 [接入 AI 助手](/dev/mcp) |
 | 2026-10-12 | 新增 [登录方式配置说明](/dev/login-setup)：钉钉、飞书、企业微信开发者后台要开的权限（含权限代码和对应接口）、回调地址、发布、验证和常见报错。企业微信的可信域名验证文件可以直接填在「登录方式 → 企业微信应用」里，平台在 `/<文件名>` 返回，不用动服务器 |
 | 2026-10-11 | **版本号与 VI**：平台版本 `0.1.0`（Beta，语义化版本，见 [版本更新说明](/dev/releases)），`GET /api/me` 新增 `platform: { version, channel }`。控制台外观改为整套**视觉识别（VI）**：默认「以虎科技 VI」，管理员可按公司 VI 改颜色、字体、圆角、LOGO，每个空间可以有自己的 VI（`/api/me` 的 `brand`，`null` = 跟随平台）；`/api/auth/config` 的 `primaryColor` 换成 `theme: { preset, tokens }`。`get_brand_guidelines` 新增 `consoleTheme`，Agent 做页面时可以参考控制台当前的配色 |
 | 2026-10-11 | **资料中心**：新增「资料」——公司的模板、品牌 VI、设计组件，带版本和责任人；品牌 VI 可以填结构化规范（颜色、字体、规则、口吻）。MCP 新增 `get_brand_guidelines` / `list_assets` / `get_asset` / `check_asset_updates`，Agent 能按公司规范做 PPT、页面；资料更新后提示用过旧版本的人。见 [资料中心](/dev/assets) |

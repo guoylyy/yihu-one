@@ -11,6 +11,7 @@ import { signToken } from '../lib/auth.js'
 import { badRequest, notFound, forbidden } from '../lib/http.js'
 import { TOOLS, toOpenAiTools } from '../tools/index.js'
 import { loadAppTools } from './appTools.js'
+import { routeTools, resolveCall, CALL, FIND } from './toolRouting.js'
 import { getLlmConfig, listModels, complete } from './llm.js'
 import { get as getSetting } from '../services/settings.js'
 import { listVisibleApps } from '../services/apps.js'
@@ -50,7 +51,7 @@ export async function status(ctx, { appId } = {}) {
   }
 }
 
-function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, apps = [], agent = null, hasTools = true } = {}) {
+function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, apps = [], agent = null, hasTools = true, routedApps = '' } = {}) {
   const u = ctx.user
   const d = new Date()
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}（星期${WEEK[d.getDay()]}）`
@@ -76,6 +77,7 @@ function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, a
     ? [
         '1. 业务数据都通过工具查询，绝不编造。涉及具体数据的问题**必须先调用工具再回答**；查不到就如实说。',
         '2. 用户要做的事属于某个应用时，用该应用的工具（名字以「应用code__」开头）；没有对应工具就告诉用户去哪个应用里操作，并给出应用链接。',
+        ...(routedApps ? [`   这些应用工具很多，没有直接列出：${routedApps}。要用时先调 ${FIND} 按关键词查到工具和参数，再用 ${CALL} 调用（写操作照样会让用户确认）。`] : []),
         '3. 涉及人名时先用 search_users 查到用户 id；重名时让用户选。',
         '4. 写操作调用后系统会给用户弹出确认卡片，由用户点「确认」才真正执行——信息齐了就直接调用写工具，不要先在文字里问「是否确认」。调用后简短说「请核对后点确认」，不要说「已完成」。',
         '5. 工具返回 403 或权限错误时，告诉用户这一步需要谁来处理，不要重试。',
@@ -174,12 +176,14 @@ export async function chat(ctx, { message, conversationId, context, modelId, app
   const general = await getSetting('general')
   const MAX_ROUNDS = a.maxRounds || 8
   const aiCtx = { ...ctx, via: 'AI' }
-  const tools = await toolsFor(ctx.user, agent)
+  // 工具多了（应用的 MCP 工具全部加进来可能上百个）超出模型上限：大应用的工具改由 find_app_tools / call_app_tool 路由（agent/toolRouting.js）
+  const { direct: tools, routed } = routeTools(await toolsFor(ctx.user, agent))
   const toolMap = new Map(tools.map(t => [t.name, t]))
   const openAiTools = toOpenAiTools(tools)
   const system = systemPrompt(ctx, context, {
     companyName: general.companyName, workspaceName: general.workspaceName, extraPrompt: a.extraPrompt,
-    apps: agent ? [] : await listVisibleApps(ctx), agent, hasTools: tools.length > 0
+    apps: agent ? [] : await listVisibleApps(ctx), agent, hasTools: tools.length > 0,
+    routedApps: toolMap.get(CALL)?.routedApps || ''
   })
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -196,13 +200,19 @@ export async function chat(ctx, { message, conversationId, context, modelId, app
     if (!toolCalls.length) break
 
     for (const tc of toolCalls) {
-      const tool = toolMap.get(tc.function.name)
+      let tool = toolMap.get(tc.function.name)
       let args = {}
       try { args = JSON.parse(tc.function.arguments || '{}') } catch { /* 坏 JSON 按空参数处理, 校验会报缺字段 */ }
-      emit({ type: 'tool_call', id: tc.id, name: tc.function.name, label: tool?.label || tc.function.name, args })
+      // 经路由调用的应用工具：换成真实工具，后面的确认、执行、审计和直接调用完全一样
+      let routeError = ''
+      if (tool?.name === CALL) {
+        const r = resolveCall(routed, args)
+        if (r.error) { tool = null; routeError = r.error } else { tool = r.tool; args = r.args }
+      }
+      emit({ type: 'tool_call', id: tc.id, name: tool?.name || tc.function.name, label: tool?.label || tc.function.name, args })
       let content
       if (!tool) {
-        content = `错误：不存在工具 ${tc.function.name}`
+        content = routeError || `错误：不存在工具 ${tc.function.name}`
         emit({ type: 'tool_result', id: tc.id, name: tc.function.name, ok: false, summary: '未知工具' })
       } else if (tool.confirm) {
         try {

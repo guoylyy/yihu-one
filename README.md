@@ -45,6 +45,7 @@ Yihu One (以虎 One) does that groundwork once. It runs on a single machine —
   - the platform's user and department data
   - a place in every user's AI assistant, once it exposes MCP tools
   - access to the managed models
+- **Ready-made apps:** e.g. [FDE delivery management](https://github.com/guoylyy/yihu-fde) (projects, milestones, tasks, timesheets, knowledge base — engineers and AI agents delivering together) installs with `yh add fde --git https://github.com/guoylyy/yihu-fde.git && yh up fde`: sign-in, database and its ~110 AI tools are wired up automatically
 - **One workspace:** every app — built here or elsewhere — in one place, with one marketplace, one permission model and one audit log
 - **Your company's look, not ours:** the console's whole visual identity (colours, fonts, corner radius, shadows, logo) is a theme. Pick a preset, adjust it to your brand guidelines with a live preview; each space (company or customer) can have its own
 
