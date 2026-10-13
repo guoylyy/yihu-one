@@ -88,6 +88,13 @@ openRouter.get('/users', wrap(req => masterUsers({ ...req.query, spaceIds: space
 openRouter.post('/events', wrap(req => usage.ingest(req.app_, req.body || {})))
 // 应用大模型: OpenAI 兼容, 平台托管模型与密钥; 可选 X-User-Token 按人记用量
 // 注意: 此端点是 OpenAI 边界, 不套平台统一的 { code, data } 包装
+openRouter.get('/llm/models', async (req, res) => {
+  try {
+    res.json(await llm.modelList(req.app_, { ip: req.ip, userToken: req.headers['x-user-token'] || '' }))
+  } catch (e) {
+    sendOpenAiError(res, e)
+  }
+})
 openRouter.post('/llm/chat/completions', async (req, res) => {
   const opts = { ip: req.ip, userToken: req.headers['x-user-token'] || '' }
   try {

@@ -138,6 +138,27 @@ function upstreamError(e) {
 
 const newId = () => `chatcmpl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 
+/**
+ * 模型清单转 OpenAI /models 形态: 只给模型名与展示名, 不含密钥与上游地址。
+ * id 即调用时 body.model 要填的值; 同名模型只保留第一个; 第一个就是不传 model 时用的默认模型
+ */
+export function toModelList(models) {
+  const seen = new Set()
+  const data = []
+  for (const m of models) {
+    if (!m.model || seen.has(m.model)) continue
+    seen.add(m.model)
+    data.push({ id: m.model, object: 'model', owned_by: 'yihu-one', name: m.name || m.model, description: m.description || null, default: data.length === 0 })
+  }
+  return { object: 'list', data }
+}
+
+/** 应用可用的对话模型; 带用户 token 时按该用户角色过滤 */
+export async function modelList(app, { ip, userToken } = {}) {
+  const { user } = await resolveUser(app, userToken, ip)
+  return toModelList(await listModels(user))
+}
+
 /** 非流式: 返回 OpenAI chat.completion 对象 */
 export async function chatCompletion(app, body, { ip, userToken } = {}) {
   const { user, ctx } = await resolveUser(app, userToken, ip)

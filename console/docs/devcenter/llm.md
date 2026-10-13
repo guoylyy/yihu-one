@@ -3,7 +3,7 @@ title: 接入大模型
 category: 应用能力
 order: 22
 summary: 应用直接用平台配置好的模型（OpenAI 兼容），密钥不出平台，用量统一统计、可设配额
-updated: 2026-10-03
+updated: 2026-10-13
 ---
 
 # 接入大模型
@@ -84,6 +84,20 @@ r = ws.llm({'messages': [{'role': 'user', 'content': '你好'}]})
 # 流式
 for ev in ws.llm({'stream': True, 'messages': [...]}):
     ...
+```
+
+## 可用模型清单
+
+```
+GET <平台地址>/api/open/llm/models
+```
+
+鉴权同上，返回 OpenAI `/models` 形态。`id` 就是调用时 `model` 要填的值，`default: true` 的是不传 `model` 时用的模型；不含密钥和上游地址。带 `X-User-Token` 时按该用户的角色过滤。
+
+```json
+{ "object": "list", "data": [
+  { "id": "deepseek-chat", "object": "model", "owned_by": "yihu-one", "name": "DeepSeek", "description": null, "default": true }
+] }
 ```
 
 ## 指定模型
