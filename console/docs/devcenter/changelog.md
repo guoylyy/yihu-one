@@ -10,6 +10,7 @@ updated: 2026-10-13
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-13 | **应用可用的模型清单**：新增 `GET /api/open/llm/models`（OpenAI `/models` 格式，`id` 即调用时的 `model`，第一个是默认模型；带 `X-User-Token` 按用户角色过滤），应用可以让用户在自己的界面里选平台托管的模型，见 [接入大模型](/dev/llm) |
 | 2026-10-13 | **AI 助手工具分流**：平台工具加上用户能看到的应用工具超过 60 个时，内置 AI 助手对工具多的应用改用 `find_app_tools` / `call_app_tool` 先查后调（模型一次能接的工具有上限，OpenAI 兼容接口一般 128 个），确认卡片和审计不变；MCP 接口照常返回全部工具。工具的 `description` 写上用户会说的关键词才查得到，只读工具记得标 `readOnlyHint: true`，见 [接入 AI 助手](/dev/mcp) |
 | 2026-10-12 | 新增 [登录方式配置说明](/dev/login-setup)：钉钉、飞书、企业微信开发者后台要开的权限（含权限代码和对应接口）、回调地址、发布、验证和常见报错。企业微信的可信域名验证文件可以直接填在「登录方式 → 企业微信应用」里，平台在 `/<文件名>` 返回，不用动服务器 |
 | 2026-10-11 | **版本号与 VI**：平台版本 `0.1.0`（Beta，语义化版本，见 [版本更新说明](/dev/releases)），`GET /api/me` 新增 `platform: { version, channel }`。控制台外观改为整套**视觉识别（VI）**：默认「以虎科技 VI」，管理员可按公司 VI 改颜色、字体、圆角、LOGO，每个空间可以有自己的 VI（`/api/me` 的 `brand`，`null` = 跟随平台）；`/api/auth/config` 的 `primaryColor` 换成 `theme: { preset, tokens }`。`get_brand_guidelines` 新增 `consoleTheme`，Agent 做页面时可以参考控制台当前的配色 |
