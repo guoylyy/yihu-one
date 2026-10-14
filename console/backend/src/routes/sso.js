@@ -2,7 +2,7 @@
 //   浏览器: 应用把用户带到工作台前端 /sso/authorize?client_id&redirect_uri&state
 //          → 前端(已登录)调 POST /api/sso/authorize 拿到带 code 的回调地址并跳转
 //   应用服务端: POST /api/sso/token 用 code 换 access_token + 用户信息; GET /api/sso/userinfo
-//   开放接口(应用凭证 Basic client_id:client_secret): 用户主数据、使用数据上报
+//   开放接口(应用凭证 Basic client_id:client_secret): 应用信息、用户主数据、给个人发消息、使用数据上报
 import express from 'express'
 import { wrap, AppError } from '../lib/http.js'
 import { authenticate } from '../lib/auth.js'
@@ -11,6 +11,7 @@ import * as llm from '../services/llm.js'
 import { masterUsers } from '../services/users.js'
 import { spacesOfApp } from '../services/spaces.js'
 import * as usage from '../services/usage.js'
+import * as openApp from '../services/openApp.js'
 
 export const ssoRouter = express.Router()
 
@@ -84,6 +85,10 @@ openRouter.use(appAuth)
 // 用户主数据: 各应用按控制台的账号/工号/部门对人
 // 只给应用能用的空间里的人（应用只属于一个空间时，就是那个空间）
 openRouter.get('/users', wrap(req => masterUsers({ ...req.query, spaceIds: spacesOfApp(req.app_) })))
+// 应用自身信息: 所属空间、平台(或空间)的名称 / LOGO / 主题
+openRouter.get('/app', wrap(req => openApp.appInfo(req.app_)))
+// 给个人发消息: 经平台配置的钉钉 / 飞书 / 企业微信(只有可信应用)
+openRouter.post('/notify', wrap(req => openApp.notifyUsers(req.app_, req.body || {})))
 // 使用数据上报: 用户在应用里做了什么
 openRouter.post('/events', wrap(req => usage.ingest(req.app_, req.body || {})))
 // 应用大模型: OpenAI 兼容, 平台托管模型与密钥; 可选 X-User-Token 按人记用量

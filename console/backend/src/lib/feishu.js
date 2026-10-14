@@ -133,3 +133,23 @@ export async function listDeptUsers(deptId, c) {
   }
   return out
 }
+
+// ---------- 应用消息(应用经平台给个人发消息) ----------
+// 需要在飞书开发者后台开通「以应用的身份发消息」(im:message:send_as_bot), 并开启机器人能力
+
+/** 消息卡片(纯函数): 标题 + markdown 正文, 有链接时加「查看详情」按钮 */
+export function messageCard({ title, markdown, url }) {
+  const elements = [{ tag: 'markdown', content: markdown }]
+  if (url) elements.push({ tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '查看详情' }, type: 'primary', url }] })
+  return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: title } }, elements }
+}
+
+/** 给一个飞书 open_id 发卡片消息 */
+export async function sendCard(openId, msg) {
+  const token = await tenantToken()
+  await callApi(`${API()}/open-apis/im/v1/messages?receive_id_type=open_id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ receive_id: openId, msg_type: 'interactive', content: JSON.stringify(messageCard(msg)) })
+  })
+}

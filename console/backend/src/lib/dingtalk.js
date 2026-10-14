@@ -71,6 +71,28 @@ async function topapi(path, body) {
   }
 }
 
+// ---------- 工作通知(应用经平台给个人发消息) ----------
+
+/** 工作通知消息体(纯函数): 有链接用 action_card(带「查看详情」), 否则 markdown */
+export function workNoticeMsg({ title, markdown, url }) {
+  if (url) return { msgtype: 'action_card', action_card: { title, markdown: `#### ${title}\n\n${markdown}`, single_title: '查看详情', single_url: url } }
+  return { msgtype: 'markdown', markdown: { title, text: `#### ${title}\n\n${markdown}` } }
+}
+
+/** 能发工作通知: 凭证齐全且填了 AgentId */
+export async function canNotify() {
+  const c = await conf()
+  return !!(c.clientId && c.clientSecret && c.agentId)
+}
+
+/** 给一批钉钉 userid 发工作通知(一次最多 100 人) */
+export async function sendWorkNotice(userIds, msg) {
+  const c = await conf()
+  await topapi('/topapi/message/corpconversation/asyncsend_v2', {
+    agent_id: Number(c.agentId), userid_list: userIds.join(','), msg: workNoticeMsg(msg)
+  })
+}
+
 async function ensureEnabled() {
   if (!(await configured())) throw new AppError(400, '钉钉未配置：请管理员在「管理 → 登录方式」填写钉钉 Client ID 和 Client Secret', 5000)
 }

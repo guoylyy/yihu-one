@@ -70,3 +70,29 @@ export async function userByCode(c, code) {
 }
 
 export const loginByCode = async (code) => userByCode(await conf(), code)
+
+// ---------- 应用消息(应用经平台给个人发消息) ----------
+
+/** 应用消息体(纯函数): 有链接用文本卡片, 否则 markdown */
+export function appMessage(agentId, userIds, { title, markdown, plain, url }) {
+  const base = { touser: userIds.join('|'), agentid: Number(agentId) }
+  if (url) return { ...base, msgtype: 'textcard', textcard: { title, description: (plain || markdown).slice(0, 500), url, btntxt: '详情' } }
+  return { ...base, msgtype: 'markdown', markdown: { content: `**${title}**\n${markdown}` } }
+}
+
+/** 给一批企业微信 userid 发应用消息(一次最多 1000 人) */
+export async function sendAppMessage(userIds, msg) {
+  const c = await conf()
+  const token = await accessToken(c)
+  let r
+  try {
+    r = await fetch(`${API()}/cgi-bin/message/send?access_token=${token}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(appMessage(c.agentId, userIds, msg)), signal: AbortSignal.timeout(10_000)
+    })
+  } catch (e) {
+    throw new AppError(502, `连不上企业微信：${e.message}`, 5001)
+  }
+  const d = await r.json().catch(() => ({}))
+  if (d.errcode !== 0) throw new AppError(502, `企业微信发消息失败：${d.errmsg || d.errcode}`, 5001)
+}

@@ -68,6 +68,7 @@ export const SCHEMA = {
       clientId: { label: 'Client ID（原 AppKey）', type: 'text', env: 'DINGTALK_CLIENT_ID', default: '', help: '钉钉开发者后台 → 应用 → 凭证与基础信息，形如 ding8f6x…；同页的「App ID」不需要填。要开的权限（通讯录个人信息读权限、成员信息读权限等）见开发中心 /dev/login-setup' },
       clientSecret: { label: 'Client Secret（原 AppSecret）', type: 'password', env: 'DINGTALK_CLIENT_SECRET', default: '', help: '同一页，点「查看」拿到完整值' },
       corpId: { label: 'CorpId（企业 ID）', type: 'text', env: 'DINGTALK_CORP_ID', default: '', help: '开发者后台首页右上角或「企业信息」里，ding 开头；钉钉内免登用' },
+      agentId: { label: 'AgentId（发工作通知用）', type: 'text', default: '', help: '开发者后台 → 应用 → 凭证与基础信息里的 AgentId。填了之后，应用可以经平台给个人发钉钉工作通知（如 FDE 的任务指派、工时审批）；不填则不发' },
       bootstrapAdmins: { label: '钉钉管理员（userid）', type: 'list', default: [], help: '这些人钉钉登录后自动成为管理员。userid 在钉钉管理后台 → 通讯录 → 成员详情里' }
     }
   },
