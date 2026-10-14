@@ -125,6 +125,7 @@ export async function reorder(ctx, appIds) {
 function adminDto(a, owners) {
   return {
     id: a.id, code: a.code, name: a.name, icon: a.icon, iconColor: a.iconColor, description: a.description, category: a.category,
+    iconCustom: !!a.iconCustom, manifestIcon: a.manifestIcon || null, manifestIconColor: a.manifestIconColor || null,
     type: a.type, url: a.url, redirectUris: a.redirectUris || [], mcpUrl: a.mcpUrl, visibility: a.visibility,
     isDefault: a.isDefault, status: a.status, sort: a.sort,
     spaceId: a.spaceId ?? 1, extraSpaceIds: Array.isArray(a.extraSpaceIds) ? a.extraSpaceIds : [],
@@ -219,6 +220,15 @@ export async function adminUpdate(ctx, id, body) {
   if (!before) throw notFound('应用不存在')
   const data = appData(body, false)
   await checkSpaces(data)
+  if (before.managed) {
+    // 代码应用：图标可以在这里换（换了以后发布不再覆盖），其他清单里的信息仍以 yh-app.json 为准
+    if (body.iconReset) {
+      Object.assign(data, { icon: before.manifestIcon, iconColor: before.manifestIconColor, iconCustom: false })
+    } else if (data.icon !== undefined || data.iconColor !== undefined) {
+      data.iconCustom = true
+    }
+    for (const k of ['name', 'type', 'url', 'redirectUris', 'mcpUrl', 'category', 'description']) delete data[k]
+  }
   const app = await prisma.app.update({ where: { id: before.id }, data })
   // 改成默认应用时, 放到已有用户的工作台上(新用户首次打开时自动获得)
   if (app.isDefault && !before.isDefault && app.status === 'ACTIVE') {

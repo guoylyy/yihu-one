@@ -150,8 +150,21 @@
     <!-- 设置 / 登记 -->
     <el-dialog v-model="dlg.visible" :title="dlg.id ? `设置「${dlg.form.name}」` : '登记外部应用'" width="620px" top="6vh">
       <el-alert v-if="dlg.managed" type="info" :closable="false" show-icon style="margin-bottom: 16px"
-        title="平台托管的应用：名称、地址、MCP 等以代码里的 yh-app.json 为准（每次发布同步）；这里只改可见范围和工作台设置。" />
+        title="平台托管的应用：名称、地址、MCP 等以代码里的 yh-app.json 为准（每次发布同步）；这里可以换图标，改可见范围和工作台设置。" />
       <el-form ref="formRef" :model="dlg.form" :rules="rules" label-width="100px">
+        <el-form-item v-if="dlg.managed" label="图标">
+          <div class="managed-icon">
+            <IconPicker v-model:icon="dlg.form.icon" v-model:color="dlg.form.iconColor" :name="dlg.form.name" />
+            <div class="yh-muted small">
+              <template v-if="dlg.iconCustom">
+                已换成自定义图标，之后发布不会被代码里的图标覆盖。
+                <el-button v-if="dlg.manifestIcon !== null" link type="primary" size="small" @click="resetIcon">恢复为代码里的图标</el-button>
+              </template>
+              <template v-else>现在用的是代码里 yh-app.json 的图标；在这里换了以后，发布不再覆盖它。</template>
+              <span v-if="dlg.iconReset" class="reset-tip">（保存后恢复）</span>
+            </div>
+          </div>
+        </el-form-item>
         <template v-if="!dlg.managed">
           <el-form-item label="类型" prop="type">
             <el-radio-group v-model="dlg.form.type" :disabled="!!dlg.id">
@@ -425,7 +438,7 @@ async function more(row, cmd) {
 
 // ---------- 设置 / 登记 ----------
 const formRef = ref(null)
-const dlg = reactive({ visible: false, id: null, managed: false, saving: false, form: {}, ownerInitial: [], visUserInitial: [] })
+const dlg = reactive({ visible: false, id: null, managed: false, saving: false, form: {}, ownerInitial: [], visUserInitial: [], iconCustom: false, manifestIcon: null, manifestIconColor: null, iconReset: false, iconBefore: null })
 const user = useUserStore()
 const multiSpace = computed(() => !!user.me?.multiSpace)
 const spaces = ref([])
@@ -438,6 +451,11 @@ const rules = {
 async function openEdit(row) {
   dlg.id = row?.id || null
   dlg.managed = !!row?.managed
+  dlg.iconCustom = !!row?.iconCustom
+  dlg.manifestIcon = row?.managed ? row.manifestIcon || '' : null
+  dlg.manifestIconColor = row?.manifestIconColor || ''
+  dlg.iconReset = false
+  dlg.iconBefore = { icon: row?.icon || '', iconColor: row?.iconColor || '' }
   dlg.ownerInitial = row?.owner ? [row.owner] : []
   dlg.visUserInitial = []
   const v = row?.visibility
@@ -484,6 +502,12 @@ async function save() {
     ownerId: f.ownerId || null,
     ...(multiSpace.value ? { spaceId: f.spaceId, extraSpaceIds: f.extraSpaceIds } : {})
   }
+  if (dlg.managed) {
+    // 代码应用：只有换了图标才发图标（发了就算自定义，之后发布不再覆盖）
+    // 点了「恢复」之后又换了别的图标：按自定义算
+    if (dlg.iconReset && f.icon === (dlg.manifestIcon || '') && f.iconColor === (dlg.manifestIconColor || '')) payload.iconReset = true
+    else if (f.icon !== dlg.iconBefore.icon || f.iconColor !== dlg.iconBefore.iconColor) Object.assign(payload, { icon: f.icon, iconColor: f.iconColor })
+  }
   if (!dlg.managed) {
     Object.assign(payload, {
       type: f.type, code: f.code, name: f.name, icon: f.icon, iconColor: f.iconColor, category: f.category, description: f.description, url: f.url,
@@ -507,6 +531,13 @@ async function save() {
   } finally {
     dlg.saving = false
   }
+}
+
+/** 代码应用：预览恢复成 yh-app.json 里的图标，保存时才真正恢复 */
+function resetIcon() {
+  dlg.iconReset = true
+  dlg.form.icon = dlg.manifestIcon || ''
+  dlg.form.iconColor = dlg.manifestIconColor || ''
 }
 
 async function removeRegistration(row) {
@@ -556,6 +587,8 @@ onBeforeUnmount(() => clearTimeout(timer))
 </script>
 
 <style scoped>
+.managed-icon { display: flex; flex-direction: column; gap: 6px; }
+.reset-tip { color: var(--yh-warning); }
 .agent {
   display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 9px 12px; border-radius: 10px; margin-bottom: 14px;
   background: var(--yh-fill); border: 1px solid var(--yh-border-soft); flex-wrap: wrap;

@@ -104,6 +104,23 @@ compose_platform() {
   docker compose --env-file "$ENV_FILE" -f "$PLATFORM/compose.yml" $profiles "$@"
 }
 
+# 清单里的 icon 写的是仓库里的图片文件（如 "icon": "icon.png"）：读出来转成 data URL 登记，否则输出空（照常用 icon 的原值）。
+# 只认清单所在目录下的 png / jpg / gif / webp / svg（不能用 .. 跳出仓库），不超过 28KB（控制台图标的上限）
+manifest_icon_file() { # manifest_icon_file <清单路径>
+  local m="$1" v f mime size
+  v="$(jq -r '.icon // empty' "$m")"
+  echo "$v" | grep -qiE '^[A-Za-z0-9_./-]+\.(png|jpe?g|gif|webp|svg)$' || return 0
+  case "$v" in /*|*..*) gray "  icon「${v}」要写仓库里的相对路径，不能用绝对路径或 .." >&2; return 0;; esac
+  f="$(dirname "$m")/$v"
+  [ -f "$f" ] || { gray "  icon 文件 $v 不存在，按图片地址 / 文字处理" >&2; return 0; }
+  size="$(wc -c < "$f" | tr -d ' ')"
+  if [ "$size" -gt 28000 ]; then red "  icon 文件 $v 有 $((size / 1024))KB，超过 28KB，没用上：压缩一下（建议 128×128 的 PNG / SVG）" >&2; return 0; fi
+  case "$(echo "$v" | tr 'A-Z' 'a-z')" in
+    *.png) mime=image/png;; *.jpg|*.jpeg) mime=image/jpeg;; *.gif) mime=image/gif;; *.webp) mime=image/webp;; *.svg) mime=image/svg+xml;;
+  esac
+  printf 'data:%s;base64,%s' "$mime" "$(base64 < "$f" | tr -d '\n')"
+}
+
 manifest() { # manifest <code> → 清单路径（apps/<code>/yh-app.json 优先，其次源码里的）
   if [ -f "$APPS/$1/yh-app.json" ]; then echo "$APPS/$1/yh-app.json"
   elif [ -f "$APPS/$1/src/yh-app.json" ]; then echo "$APPS/$1/src/yh-app.json"
@@ -549,10 +566,11 @@ cmd_up() {
   src="$(cat "$dir/.source" 2>/dev/null)"
   branch="$(git -C "$dir/src" rev-parse --abbrev-ref HEAD 2>/dev/null)"; [ "$branch" = "HEAD" ] && branch="$(mf "$m" .deploy.branch)"
   [ "${src#git:}" != "$src" ] || branch=""
-  local body resp secret
+  local body resp secret icondata
+  icondata="$(manifest_icon_file "$m")"
   body="$(jq -n --argjson m "$(cat "$m")" --arg url "$url$entry" --arg cb "$url$callback" --argjson mcp "$mcpurl" --argjson reset "$reset" \
-    --arg src "$src" --arg branch "$branch" \
-    '{code:$m.code, name:$m.name, icon:$m.icon, iconColor:$m.iconColor, category:$m.category, description:$m.description,
+    --arg src "$src" --arg branch "$branch" --arg icondata "$icondata" \
+    '{code:$m.code, name:$m.name, icon:(if $icondata == "" then $m.icon else $icondata end), iconColor:$m.iconColor, category:$m.category, description:$m.description,
       url:$url, redirectUris:[$cb], mcpUrl:$mcp, visibility:$m.visibility, isDefault:($m.isDefault // false),
       source:$src, branch:(if $branch == "" then null else $branch end), resetSecret:$reset}')"
   resp="$(platform_api POST /api/platform/apps/register -H 'Content-Type: application/json' -d "$body")"

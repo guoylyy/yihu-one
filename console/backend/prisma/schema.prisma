@@ -112,6 +112,11 @@ model App {
   icon               String?      @db.Text
   /// 图标配色（主色，如 #2563eb）；为空时用默认色板按名称取色
   iconColor          String?      @db.VarChar(20)
+  /// 代码应用：管理员 / 创建者在控制台改过图标后为 true，之后发布不再用 yh-app.json 的图标覆盖它
+  iconCustom         Boolean      @default(false)
+  /// 代码应用 yh-app.json 里的图标和配色（每次发布同步），「恢复为代码里的图标」时用
+  manifestIcon       String?      @db.Text
+  manifestIconColor  String?      @db.VarChar(20)
   description        String?      @db.VarChar(500)
   category           String?      @db.VarChar(50)
   type               String       @db.VarChar(20)

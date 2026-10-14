@@ -155,6 +155,18 @@ DN="$(api GET /api/admin/apps | jq -r '.data[] | select(.code=="demo-node") | .i
 api PUT "/api/admin/apps/$DN" -d "{\"visibility\":{\"deptIds\":[$DEPT]}}" >/dev/null
 HINT="李四不在研发部，应看不到 demo-node"; check "可见范围：部门外的人看不到应用" sh -c "curl -s $B/api/apps -H 'Authorization: Bearer $T_LS' | jq -e '[.data[].code] | index(\"demo-node\") == null'"
 HINT="李四应被拒绝"; check "可见范围：部门外的人登录应用被拒" sh -c "$(declare -f sso); B=$B J='$J'; ! sso '$B/apps/demo-node/' '$T_LS' | grep -q '你好'"
+# 图标：清单里写仓库里的图片文件 → 登记成图片；管理员换过的图标发布时不被覆盖，可以恢复
+DN_M="$(ls "$DIR"/apps/demo-node/yh-app.json "$DIR"/apps/demo-node/src/yh-app.json 2>/dev/null | head -1)"
+printf '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1c1917"/></svg>' > "$(dirname "$DN_M")/icon.svg"
+jq '.icon = "icon.svg"' "$DN_M" > "$DN_M.tmp" && mv "$DN_M.tmp" "$DN_M"
+dn_icon() { api GET /api/admin/apps | jq -r '.data[] | select(.code=="demo-node") | "\(.iconCustom) \(.icon)"' | cut -c1-40; }
+$YH up demo-node >> demo.log 2>&1; V="$(dn_icon)"
+HINT="清单 icon 写 icon.svg 时应登记成 SVG 图片，实际：$V"; check "图标：清单里写仓库里的图片文件" sh -c "case '$V' in 'false data:image/svg+xml;base64,'*) exit 0;; *) exit 1;; esac"
+api PUT "/api/admin/apps/$DN" -d '{"icon":"🎯","iconColor":"#d2521e"}' >/dev/null
+$YH up demo-node >> demo.log 2>&1; V="$(dn_icon)"
+HINT="管理员换的图标在重新发布后应保留，实际：$V"; check "图标：管理员换过的图标发布时不被覆盖" sh -c "[ '$V' = 'true 🎯' ]"
+api PUT "/api/admin/apps/$DN" -d '{"iconReset":true}' >/dev/null; V="$(dn_icon)"
+HINT="恢复后应回到清单里的 SVG，实际：$V"; check "图标：恢复为代码里的图标" sh -c "case '$V' in 'false data:image/svg+xml;base64,'*) exit 0;; *) exit 1;; esac"
 
 # 标准 OIDC：现成系统（GitLab、Grafana 等）不改代码接入。这里用 curl 模拟一个标准客户端走完授权码 + PKCE
 DISCO="$(curl -s "$B/.well-known/openid-configuration")"

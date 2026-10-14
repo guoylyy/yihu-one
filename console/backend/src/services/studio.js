@@ -231,6 +231,8 @@ export async function updateListing(ctx, id, b) {
   if (b.name !== undefined) { d.name = str(b.name, 60, '名称'); if (!d.name) throw badRequest('名称不能为空') }
   if (b.icon !== undefined) d.icon = validIcon(b.icon)
   if (b.iconColor !== undefined) d.iconColor = validColor(b.iconColor)
+  // 代码应用：在这里换过图标，之后发布就不再用 yh-app.json 的图标覆盖
+  if ((b.icon !== undefined || b.iconColor !== undefined) && app.kind === 'HOSTED') d.iconCustom = true
   if (b.description !== undefined) d.description = str(b.description, 200, '简介') || null
   if (b.intro !== undefined) d.intro = str(b.intro, 20000, '详细介绍') || null
   if (b.category !== undefined) d.category = str(b.category, 30, '分类') || null

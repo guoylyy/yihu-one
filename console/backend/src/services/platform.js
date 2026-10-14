@@ -39,12 +39,16 @@ export function checkCode(code) {
 export async function registerApp(b) {
   checkCode(b.code)
   if (!b.name || !b.url) throw badRequest('name、url 必填')
+  const manifestIcon = validIcon(b.icon)
+  const manifestIconColor = validColor(b.iconColor)
   const data = {
-    name: b.name, icon: validIcon(b.icon), iconColor: validColor(b.iconColor), category: b.category || null, description: b.description || null,
+    name: b.name, icon: manifestIcon, iconColor: manifestIconColor, manifestIcon, manifestIconColor, category: b.category || null, description: b.description || null,
     type: 'SSO', url: b.url, redirectUris: b.redirectUris || [], mcpUrl: b.mcpUrl || null,
     managed: true, source: b.source || null, branch: b.branch || null, status: 'ACTIVE', deletedAt: null
   }
   const existing = await prisma.app.findUnique({ where: { code: b.code } })
+  // 管理员 / 创建者在控制台换过图标的，清单里的图标只记下来（「恢复为代码里的图标」用），不覆盖显示的图标
+  if (existing?.iconCustom) { delete data.icon; delete data.iconColor }
   let secret = null
   if (!existing || !existing.clientSecretHash || b.resetSecret) secret = newSecret()
   const hash = secret ? { clientSecretHash: sha256(secret) } : {}
