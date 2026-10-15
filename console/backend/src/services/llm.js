@@ -5,13 +5,15 @@ import prisma from '../lib/prisma.js'
 import { audit } from '../lib/audit.js'
 import { AppError, badRequest, forbidden } from '../lib/http.js'
 import { verifyToken, loadUser } from '../lib/auth.js'
-import { complete, listModels, getLlmConfig } from '../agent/llm.js'
+import { complete, listModels, getLlmConfig, embed } from '../agent/llm.js'
 import * as settings from './settings.js'
 
 const DEFAULT_SYSTEM = '你是一个有用的助手。'
 const ROLES = ['system', 'user', 'assistant', 'tool']
 const PASSTHROUGH_PARAMS = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'stop']
 const MAX_TOOLS = 64
+const MAX_EMBED_INPUTS = 64
+const MAX_EMBED_CHARS = 8192
 
 /** 解析可选的用户 access_token(X-User-Token): 必须是统一认证签给本应用的 app token */
 export async function resolveUser(app, token, ip) {
@@ -44,9 +46,12 @@ export async function resolveCfg(body, user) {
   return cfg
 }
 
+/** content 可能是 OpenAI 的 part 数组, system 只取其中的文字 */
+const textOf = (c) => Array.isArray(c) ? c.map(p => typeof p === 'string' ? p : p?.type === 'text' ? p.text : '').join('') : String(c || '')
+
 /** 从消息中抽出 system, 其余原样保留(OpenAI/Anthropic 转换都在调用边界做) */
 function splitSystem(messages) {
-  const systems = messages.filter(m => m.role === 'system').map(m => String(m.content || '')).filter(Boolean)
+  const systems = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).filter(Boolean)
   return {
     system: systems.join('\n\n') || DEFAULT_SYSTEM,
     messages: messages.filter(m => m.role !== 'system')
@@ -252,5 +257,56 @@ export async function streamCompletion(app, body, { ip, userToken } = {}, res) {
     send([], { usage: { prompt_tokens: usage.prompt, completion_tokens: usage.completion, total_tokens: usage.total } })
     res.write('data: [DONE]\n\n')
     res.end()
+  }
+}
+
+/** 校验 embeddings 的 input: 字符串或字符串数组, 返回数组 */
+export function normalizeEmbedInput(input) {
+  const list = Array.isArray(input) ? input : [input]
+  if (!list.length || list.length > MAX_EMBED_INPUTS) throw badRequest(`input 须为 1~${MAX_EMBED_INPUTS} 条文本`)
+  list.forEach((t, i) => {
+    if (typeof t !== 'string' || !t.trim()) throw badRequest(`input[${i}] 须为非空字符串`)
+    if (t.length > MAX_EMBED_CHARS) throw badRequest(`input[${i}] 超过 ${MAX_EMBED_CHARS} 字`)
+  })
+  return list
+}
+
+/**
+ * 文本向量: OpenAI /embeddings 形态。模型来自「模型与 AI」里类型为向量(EMBEDDING)的模型
+ * body.model 不传 → 第一个启用的向量模型; 传了 → 按模型名匹配
+ */
+export async function embeddings(app, body, { ip, userToken } = {}) {
+  const { user, ctx } = await resolveUser(app, userToken, ip)
+  if (!body || typeof body !== 'object') throw badRequest('请求体格式不对')
+  const list = normalizeEmbedInput(body.input)
+  const dimensions = body.dimensions == null ? undefined : Number(body.dimensions)
+  if (dimensions !== undefined && (!Number.isInteger(dimensions) || dimensions < 1)) throw badRequest('dimensions 须为正整数')
+  const rows = await prisma.llmConfig.findMany({
+    where: { deletedAt: null, enabled: true, kind: 'EMBEDDING' },
+    orderBy: [{ sort: 'asc' }, { id: 'asc' }]
+  })
+  const wanted = String(body.model || '').trim()
+  const cfg = wanted ? rows.find(m => m.model === wanted) : rows[0]
+  if (!cfg) {
+    if (wanted) throw new AppError(404, `向量模型 ${wanted} 未配置或未启用`, 1004)
+    throw new AppError(503, '平台尚未配置向量模型，请在「管理 → 模型与 AI」中新增一个 embedding 模型', 1006)
+  }
+  await assertQuota(app)
+  const startedAt = Date.now()
+  let vectors
+  try {
+    vectors = await embed(list, { dimensions, modelId: cfg.id })
+  } catch (e) {
+    await recordEvent(app, user, cfg.model, { prompt: 0, completion: 0, total: 0 }, Date.now() - startedAt, 'ERROR')
+    throw upstreamError(e)
+  }
+  const prompt = list.reduce((n, t) => n + estimateTokens(t), 0)
+  await recordEvent(app, user, cfg.model, { prompt, completion: 0, total: prompt }, Date.now() - startedAt, 'OK')
+  audit(ctx, 'llm.embed', { entityType: 'app', entityId: app.id, detail: { model: cfg.model, inputs: list.length, totalTokens: prompt } })
+  return {
+    object: 'list',
+    model: cfg.model,
+    data: vectors.map((embedding, index) => ({ object: 'embedding', index, embedding })),
+    usage: { prompt_tokens: prompt, total_tokens: prompt }
   }
 }

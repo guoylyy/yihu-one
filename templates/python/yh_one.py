@@ -263,6 +263,35 @@ class Workspace:
         conn.close()
         return data
 
+    def embed(self, opts: dict, timeout: int = 120):
+        """文本向量（OpenAI /embeddings 兼容），用平台「模型与 AI」里配置的向量模型。
+
+        opts：input（字符串或字符串列表，必填）、model、dimensions、userToken（可选）。
+        返回 list[list[float]]，顺序与 input 一致。
+        """
+        if not (self.client_id and self.client_secret):
+            raise WorkspaceError("缺少应用凭证（YH_CLIENT_ID/YH_CLIENT_SECRET）")
+        body = {k: v for k, v in opts.items() if k != "userToken"}
+        u = urlparse(self.api_url + "/api/open/llm/embeddings")
+        conn_cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
+        conn = conn_cls(u.hostname, u.port, timeout=timeout)
+        headers = {"Content-Type": "application/json", "Authorization": self._basic()}
+        if opts.get("userToken"):
+            headers["X-User-Token"] = opts["userToken"]
+        try:
+            conn.request("POST", u.path, body=json.dumps(body).encode(), headers=headers)
+            resp = conn.getresponse()
+            try:
+                data = json.loads(resp.read() or b"{}")
+            except json.JSONDecodeError:
+                data = {}
+        finally:
+            conn.close()
+        if resp.status >= 400:
+            raise WorkspaceError((data.get("error") or {}).get("message")
+                                 or f"平台返回 HTTP {resp.status}")
+        return [d.get("embedding") for d in sorted(data.get("data") or [], key=lambda d: d.get("index", 0))]
+
     def _iter_sse(self, conn, resp):
         """迭代 OpenAI SSE：data: 行解析为 dict 产出，[DONE] 结束。"""
         try:

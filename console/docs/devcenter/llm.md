@@ -3,7 +3,7 @@ title: 接入大模型
 category: 应用能力
 order: 22
 summary: 应用直接用平台配置好的模型（OpenAI 兼容），密钥不出平台，用量统一统计、可设配额
-updated: 2026-10-13
+updated: 2026-10-15
 ---
 
 # 接入大模型
@@ -85,6 +85,42 @@ r = ws.llm({'messages': [{'role': 'user', 'content': '你好'}]})
 for ev in ws.llm({'stream': True, 'messages': [...]}):
     ...
 ```
+
+## 图片输入
+
+用支持看图的模型（如 Claude、通义千问 VL）时，`content` 按 OpenAI 的写法传数组，图片用 `image_url`（`data:image/jpeg;base64,...` 或公网可访问的 `https://` 地址）。模型配的是 Anthropic 时平台自动转换格式：
+
+```js
+await ws.llm({
+  messages: [{ role: 'user', content: [
+    { type: 'text', text: '这是什么产品？给出品类和材质' },
+    { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + buf.toString('base64') } }
+  ] }]
+})
+```
+
+`/api/open/llm/*` 的请求体上限是 **20MB**，图片先压缩（长边 1568px 以内足够看清）再发。模型本身不支持看图时，上游会报错。
+
+## 文本向量（embeddings）
+
+做语义搜索、相似推荐时用。模型来自「管理 → 模型与 AI」里类型为**向量模型**的配置（如通义 `text-embedding-v3`），没配时返回 503。
+
+```
+POST <平台地址>/api/open/llm/embeddings
+{ "input": ["竹制收纳盒", "bamboo storage box"], "dimensions": 1024 }
+```
+
+请求和响应与 OpenAI `/embeddings` 一致（`model` 可选，填向量模型的模型名；`input` 最多 64 条、每条 8192 字以内）。用量记入 AI 用量，受同一个每日配额约束。SDK：
+
+```js
+const [v1, v2] = await ws.embed({ input: ['竹制收纳盒', 'bamboo storage box'] })
+```
+
+```python
+vectors = ws.embed({"input": ["竹制收纳盒"]})
+```
+
+OpenAI SDK 的 `openai.embeddings.create({ input })` 也可以直接用。
 
 ## 可用模型清单
 

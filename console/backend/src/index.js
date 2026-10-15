@@ -39,6 +39,8 @@ app.use(cors())
 
 // MCP 自带 body 解析, 必须在全局 express.json 之前
 mountMcp(app)
+// 应用大模型接口要带图片（base64），单独放宽；其余接口仍是 2mb
+app.use('/api/open/llm', express.json({ limit: '20mb' }))
 app.use(express.json({ limit: '2mb' }))
 
 app.get('/health', (req, res) => res.json({ ok: true }))

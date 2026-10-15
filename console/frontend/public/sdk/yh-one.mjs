@@ -225,6 +225,29 @@ export class Workspace {
     if (opts.stream) return parseSSE(r.body)
     return r.json()
   }
+
+  /**
+   * 文本向量（OpenAI /embeddings 兼容），用平台「模型与 AI」里配置的向量模型
+   * opts: { input: string | string[], model?, dimensions?, userToken? }
+   * 返回 number[][]，顺序与 input 一致
+   */
+  async embed(opts = {}) {
+    if (!this.clientId || !this.clientSecret) throw new WorkspaceError('缺少应用凭证（YH_CLIENT_ID / YH_CLIENT_SECRET）')
+    const { userToken, ...body } = opts
+    const headers = { 'Content-Type': 'application/json', Authorization: this.basic() }
+    if (userToken) headers['X-User-Token'] = userToken
+    let r
+    try {
+      r = await fetch(this.apiUrl + '/api/open/llm/embeddings', {
+        method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120_000)
+      })
+    } catch (e) {
+      throw new WorkspaceError(`连不上平台 ${this.apiUrl}：${e.message}`)
+    }
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) throw new WorkspaceError(data.error?.message || `平台返回 HTTP ${r.status}`)
+    return (data.data || []).sort((a, b) => a.index - b.index).map(d => d.embedding)
+  }
 }
 
 /** 解析 OpenAI SSE：逐条产出对象，[DONE] 结束 */

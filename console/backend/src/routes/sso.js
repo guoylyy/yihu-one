@@ -100,6 +100,13 @@ openRouter.get('/llm/models', async (req, res) => {
     sendOpenAiError(res, e)
   }
 })
+openRouter.post('/llm/embeddings', async (req, res) => {
+  try {
+    res.json(await llm.embeddings(req.app_, req.body || {}, { ip: req.ip, userToken: req.headers['x-user-token'] || '' }))
+  } catch (e) {
+    sendOpenAiError(res, e)
+  }
+})
 openRouter.post('/llm/chat/completions', async (req, res) => {
   const opts = { ip: req.ip, userToken: req.headers['x-user-token'] || '' }
   try {

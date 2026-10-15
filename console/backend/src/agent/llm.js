@@ -188,8 +188,24 @@ async function completeOpenAi(cfg, { system, messages, tools, onText, signal, re
 
 // ---------- Anthropic ----------
 
+/**
+ * OpenAI 的 content part → Anthropic content block
+ * 支持 text 和 image_url（data:image/...;base64 或 http(s) 地址）；其他类型按文本兜底
+ */
+function toAnthropicPart(p) {
+  if (typeof p === 'string') return { type: 'text', text: p }
+  if (p?.type === 'image_url') {
+    const url = String(p.image_url?.url ?? p.image_url ?? '')
+    const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/is.exec(url)
+    if (m) return { type: 'image', source: { type: 'base64', media_type: m[1].toLowerCase(), data: m[2] } }
+    return { type: 'image', source: { type: 'url', url } }
+  }
+  if (p?.type === 'text') return { type: 'text', text: String(p.text ?? '') }
+  return { type: 'text', text: JSON.stringify(p) }
+}
+
 /** OpenAI 格式消息 → Anthropic messages */
-function toAnthropicMessages(messages) {
+export function toAnthropicMessages(messages) {
   const out = []
   const push = (role, block) => {
     const last = out[out.length - 1]
@@ -197,7 +213,10 @@ function toAnthropicMessages(messages) {
     else out.push({ role, content: [block] })
   }
   for (const m of messages) {
-    if (m.role === 'user') push('user', { type: 'text', text: m.content })
+    if (m.role === 'user') {
+      if (Array.isArray(m.content)) m.content.forEach(p => push('user', toAnthropicPart(p)))
+      else push('user', { type: 'text', text: m.content })
+    }
     else if (m.role === 'assistant') {
       if (m.content) push('assistant', { type: 'text', text: m.content })
       for (const tc of m.tool_calls || []) {

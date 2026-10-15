@@ -6,7 +6,8 @@ import assert from 'node:assert/strict'
 process.env.JWT_SECRET ||= 'test-secret-at-least-16-chars'
 process.env.DATABASE_URL ||= 'mysql://u:p@127.0.0.1:1/none'
 
-const { estimateTokens, resolveUser, toModelList } = await import('../src/services/llm.js')
+const { estimateTokens, resolveUser, toModelList, normalizeEmbedInput } = await import('../src/services/llm.js')
+const { toAnthropicMessages } = await import('../src/agent/llm.js')
 const { SCHEMA } = await import('../src/services/settings.js')
 
 const fakeApp = { id: 7, code: 'cli_demo' }
@@ -58,4 +59,37 @@ test('全局默认配额在设置 SCHEMA 里（不加环境变量）', () => {
   assert.equal(SCHEMA.llm.page, 'ai')
   assert.equal(SCHEMA.llm.fields.dailyTokenLimit.type, 'number')
   assert.equal(SCHEMA.llm.fields.dailyTokenLimit.default, 0)
+})
+
+test('toAnthropicMessages：OpenAI 图片 part 转成 Anthropic image block', () => {
+  const out = toAnthropicMessages([{
+    role: 'user',
+    content: [
+      { type: 'text', text: '这是什么产品' },
+      { type: 'image_url', image_url: { url: 'data:image/JPEG;base64,QUJD' } },
+      { type: 'image_url', image_url: { url: 'https://example.com/a.png' } }
+    ]
+  }])
+  assert.equal(out.length, 1)
+  assert.deepEqual(out[0].content, [
+    { type: 'text', text: '这是什么产品' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } },
+    { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } }
+  ])
+})
+
+test('toAnthropicMessages：纯文本消息不变，连续同角色合并', () => {
+  const out = toAnthropicMessages([{ role: 'user', content: '你好' }, { role: 'user', content: [{ type: 'text', text: '再问' }] }])
+  assert.equal(out.length, 1)
+  assert.deepEqual(out[0].content, [{ type: 'text', text: '你好' }, { type: 'text', text: '再问' }])
+})
+
+test('normalizeEmbedInput：字符串转数组，空串 / 超长 / 太多条报 400', () => {
+  assert.deepEqual(normalizeEmbedInput('竹制收纳盒'), ['竹制收纳盒'])
+  assert.deepEqual(normalizeEmbedInput(['a', 'b']), ['a', 'b'])
+  assert.throws(() => normalizeEmbedInput(''), e => e.status === 400)
+  assert.throws(() => normalizeEmbedInput([]), e => e.status === 400)
+  assert.throws(() => normalizeEmbedInput([1]), e => e.status === 400)
+  assert.throws(() => normalizeEmbedInput('x'.repeat(8193)), e => e.status === 400)
+  assert.throws(() => normalizeEmbedInput(Array(65).fill('a')), e => e.status === 400)
 })

@@ -3,13 +3,14 @@ title: 变更记录
 category: 参考
 order: 61
 summary: 开发中心与接入接口的变化
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # 变更记录
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-15 | **应用大模型：图片与向量**：`/api/open/llm/chat/completions` 支持 OpenAI 写法的图片输入（`image_url`，平台模型是 Anthropic 时自动转换），`/api/open/llm/*` 请求体上限放宽到 20MB；新增 `POST /api/open/llm/embeddings`（OpenAI 兼容，用「模型与 AI」里的向量模型，计入 AI 用量与配额）。JS / Python SDK 新增 `embed()`。见 [接入大模型](/dev/llm) |
 | 2026-10-14 | **老板应用与标准工具**：应用实现 `get_key_metrics` / `get_daily_summary` / `list_pending_decisions` 三个只读标准工具，就会出现在老板的每日经营简报、老板助理和管理层首页上；平台新增工具 `get_business_overview`（一次汇总所有应用）、定时 AI 任务（`create_daily_brief` / `create_scheduled_task`，只读、推到本人手机）。助手设定新增「全部只读工具」；应用可见范围新增「部门负责人」（`roles: ["LEADER"]`）。见 [让应用出现在老板的简报里](/dev/briefing) |
 | 2026-10-14 | **代码应用的图标**：清单 `icon` 可以写仓库里的图片文件（`"icon": "icon.png"`，PNG / JPG / GIF / WebP / SVG，≤28KB），发布时平台读文件做图标；管理员在「管理 → 应用 → 设置」、创建者在「创作中心 → 上架信息」也能给代码应用换图标，换过以后发布不再被清单覆盖，可以「恢复为代码里的图标」。见 [应用部署规范](/dev/deploy) |
 | 2026-10-14 | **应用信息与给个人发消息**：新增 `GET /api/open/app`（应用所属空间、平台或空间的名称 / LOGO / 主题，应用可以跟随平台外观、限定只服务本空间）和 `POST /api/open/notify`（可信应用经平台的钉钉工作通知 / 飞书 / 企业微信给指定的人发消息，按本人绑定的账号选渠道）。钉钉应用设置新增 **AgentId**（发工作通知用）。见 [应用信息与消息](/dev/notify) |
