@@ -4,6 +4,12 @@
 #   本机试用（几分钟，http://localhost:18080，带开发登录）：
 #     ./install.sh --test --demo
 #
+#   不知道怎么选：不带参数执行，一问一答（最后会给出等价的完整命令，下次可以直接用）：
+#     ./install.sh
+#
+#   只在公司内网用（没有域名、不对外，员工用 http://<服务器 IP> 打开）：
+#     ./install.sh --company acme --intranet --cn
+#
 #   给一家公司正式安装（推荐：平台机器在内网，公网云服务器只做 HTTPS + 隧道转发）：
 #     ./install.sh --company acme --url https://one.example.com --apps-url https://apps.one.example.com \
 #                  --frp-server 1.2.3.4 --cn --demo
@@ -16,6 +22,10 @@
 #   --url <访问地址>      控制台地址，如 https://one.example.com
 #   --apps-url <地址>     应用独立域名，如 https://apps.one.example.com（生产强烈建议配：应用页面拿不到控制台登录凭证）
 #   --frp-server <IP>     云服务器公网 IP：平台机器在内网、经隧道对外时填（不填 = 自己在前面配反代）
+#   --intranet            内网模式：不对外、不配隧道，监听本机所有网卡，员工在内网用 http://<IP> 打开
+#                         （钉钉 / 飞书 / 企业微信登录要从外网回调，内网模式下用账号密码登录）
+#   --ip <内网 IP>        内网模式用哪个 IP（默认自动取）；有内网域名时改用 --url http://one.corp.example
+#   --port <端口>         内网模式监听的端口（默认 80）
 #   --cn                  国内网络：Docker 镜像、npm、Prisma 引擎走国内镜像
 #   --demo                装两个演示应用（Node / Python），装完马上能体验统一登录、AI 工具
 #   --no-openhex          构建控制台时不带 OpenHex 模型接入（其协议未定，对外分发时用）
@@ -56,6 +66,8 @@ WARNINGS=0
 
 MODE="production"; LAN=""; COMPANY=""; URL=""; APPS_URL=""; FRP=""; CN=""; DEMO=""; NO_OPENHEX=""
 DEST=""; SRC=""; UPGRADE_URL="$DEFAULT_LATEST"; GIT=""; AUTOSTART="1"; YES=""; ALLOW_UNSIGNED=""
+INTRANET=""; LAN_IP=""; PORT=""
+ARGC=$#
 while [ $# -gt 0 ]; do
   case "$1" in
     --test) MODE="test"; shift;;
@@ -64,6 +76,9 @@ while [ $# -gt 0 ]; do
     --url) URL="${2%/}"; shift 2;;
     --apps-url) APPS_URL="${2%/}"; shift 2;;
     --frp-server) FRP="${2:-}"; shift 2;;
+    --intranet) INTRANET="1"; shift;;
+    --ip) LAN_IP="${2:-}"; shift 2;;
+    --port) PORT="${2:-}"; shift 2;;
     --cn) CN="1"; shift;;
     --demo) DEMO="1"; shift;;
     --no-openhex) NO_OPENHEX="1"; shift;;
@@ -75,12 +90,102 @@ while [ $# -gt 0 ]; do
     --no-autostart) AUTOSTART=""; shift;;
     --yes|-y) YES="1"; shift;;
     --allow-unsigned) ALLOW_UNSIGNED="1"; shift;;
-    -h|--help) sed -n '2,31p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,42p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0;;
     *) err "未知参数 $1（./install.sh --help 看用法）";;
   esac
 done
 
+# ---------------------------------------------------------------- 一问一答（不带参数、有终端时）
+reach() { curl -s -o /dev/null --max-time 8 -w '%{http_code}' "$1" 2>/dev/null | grep -qE '^[1-4][0-9][0-9]$'; }
+# 本机内网 IP：默认路由那块网卡的地址（Linux 上 hostname -I 第一个可能是 docker 网桥）
+lan_ip() {
+  local ifc ip=""
+  case "$(uname -s)" in
+    Darwin) ifc="$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}')"
+      [ -n "$ifc" ] && ip="$(ipconfig getifaddr "$ifc" 2>/dev/null)"
+      [ -n "$ip" ] || ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)";;
+    *) ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
+      [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')";;
+  esac
+  echo "$ip"
+}
+# ask <提示> <默认值>：从终端读一行（curl | bash 时标准输入是脚本本身，所以读 /dev/tty）
+ask() { local a; printf '  %s%s：' "$1" "${2:+（默认 $2）}" > /dev/tty; read -r a < /dev/tty; echo "${a:-$2}"; }
+# choose <提示> <默认序号> <选项…>：打印编号选项，返回序号
+choose() {
+  local q="$1" def="$2" i=1 a; shift 2
+  printf '\n  %s\n' "$q" > /dev/tty
+  for o in "$@"; do printf '    %s) %s\n' "$i" "$o" > /dev/tty; i=$((i + 1)); done
+  while :; do
+    a="$(ask "选" "$def")"
+    case "$a" in *[!0-9]*|'') ;; *) [ "$a" -ge 1 ] && [ "$a" -lt "$i" ] && { echo "$a"; return; };; esac
+    printf '    输入 1~%s\n' "$((i - 1))" > /dev/tty
+  done
+}
+yesno() { case "$(ask "$1 [y/n]" "$2")" in y|Y|yes|是) return 0;; *) return 1;; esac; }
+
+if [ "$ARGC" -eq 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  printf '\n\033[36m以虎 One 安装向导\033[0m：回答几个问题，回车用默认值\n' > /dev/tty
+  if [ "$(choose "这次是？" 2 "在本机试用（几分钟，http://localhost:18080，用完删掉）" "给公司正式安装")" = 1 ]; then
+    MODE="test"; DEMO="1"
+  else
+    while :; do
+      COMPANY="$(ask "公司代号（小写英文，如 acme）" "")"
+      echo "$COMPANY" | grep -qE '^[a-z][a-z0-9-]{1,39}$' && break
+      printf '    小写英文开头，只含小写字母、数字、短横线\n' > /dev/tty
+    done
+    how="$(choose "员工怎么打开平台？" 1 \
+      "只在公司内网用：没有域名，用 http://<这台机器的 IP> 打开（钉钉 / 飞书登录用不了，用账号密码）" \
+      "有域名，经一台云服务器转发（这台机器在内网，云服务器做 HTTPS 和隧道）" \
+      "有域名，公司自己的网关 / 反向代理转到这台机器")"
+    if [ "$how" = 1 ]; then
+      INTRANET="1"
+      LAN_IP="$(ask "这台机器的内网 IP" "$(lan_ip)")"
+      PORT="$(ask "端口" "80")"
+    else
+      while :; do
+        URL="$(ask "平台地址（如 https://one.example.com）" "")"; URL="${URL%/}"
+        echo "$URL" | grep -qE '^https?://[^/]+$' && break
+        printf '    写成 https://域名，不带路径\n' > /dev/tty
+      done
+      d="$(echo "$URL" | sed -E 's#^[a-z]+://##; s#[:/].*$##')"
+      if yesno "给应用单独一个域名吗？（推荐：应用页面拿不到控制台的登录凭证）如 apps.$d" "y"; then
+        APPS_URL="$(ask "应用域名" "$(echo "$URL" | sed -E 's#^([a-z]+://).*#\1#')apps.$d")"; APPS_URL="${APPS_URL%/}"
+      fi
+      [ "$how" = 2 ] && FRP="$(ask "云服务器的公网 IP" "")"
+    fi
+    def_cn="n"; reach https://registry-1.docker.io/v2/ || def_cn="y"
+    yesno "国内网络？（Docker 镜像、npm 走国内镜像）" "$def_cn" && CN="1"
+    yesno "装两个演示应用？（体验统一登录、AI 工具用，以后可以删）" "n" && DEMO="1"
+  fi
+  cmd="./install.sh"
+  if [ "$MODE" = "test" ]; then cmd="$cmd --test"
+  else
+    cmd="$cmd --company $COMPANY"
+    if [ -n "$INTRANET" ]; then cmd="$cmd --intranet${LAN_IP:+ --ip $LAN_IP}"; [ "${PORT:-80}" = 80 ] || cmd="$cmd --port $PORT"
+    else cmd="$cmd --url $URL${APPS_URL:+ --apps-url $APPS_URL}${FRP:+ --frp-server $FRP}"; fi
+  fi
+  [ -n "$CN" ] && cmd="$cmd --cn"; [ -n "$DEMO" ] && cmd="$cmd --demo"
+  printf '\n  等价的命令（下次可以直接用）：\n    %s\n' "$cmd" > /dev/tty
+fi
+
 # ---------------------------------------------------------------- 参数检查
+if [ "$MODE" = "production" ] && [ -n "$INTRANET" ]; then
+  [ -z "$FRP" ] || err "--intranet 是只在内网用，不能和 --frp-server 一起用"
+  [ -z "$PORT" ] || echo "$PORT" | grep -qE '^[0-9]{1,5}$' && [ "${PORT:-80}" -ge 1 ] && [ "${PORT:-80}" -le 65535 ] || err "--port 要写 1~65535 的端口：$PORT"
+  if [ -z "$URL" ]; then
+    [ -n "$LAN_IP" ] || LAN_IP="$(lan_ip)"
+    [ -n "$LAN_IP" ] || err "取不到这台机器的内网 IP，用 --ip 指定"
+    echo "$LAN_IP" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || err "--ip 要写 IPv4 地址：$LAN_IP"
+    PORT="${PORT:-80}"
+    URL="http://$LAN_IP$([ "$PORT" = 80 ] || echo ":$PORT")"
+  else
+    # 内网域名：端口跟着地址走
+    up="$(echo "$URL" | sed -nE 's#^[a-z]+://[^/:]+:([0-9]+)$#\1#p')"
+    [ -z "$PORT" ] || [ -z "$up" ] || [ "$PORT" = "$up" ] || err "--port $PORT 和 --url 里的端口 $up 不一致"
+    PORT="${up:-${PORT:-80}}"
+  fi
+fi
 if [ "$MODE" = "production" ]; then
   [ -n "$URL" ] || err "正式安装要指定访问地址：--url https://one.example.com（本机试用：--test）"
   echo "$URL" | grep -qE '^https?://[^/]+$' || err "--url 要写成 https://域名（不带路径）：$URL"
@@ -144,7 +249,6 @@ if [ ! -f "$DEST/yh.env" ] && docker ps -a --format '{{.Names}}' | grep -qE '^yh
 fi
 
 # 网络：拉镜像、装 npm 包
-reach() { curl -s -o /dev/null --max-time 8 -w '%{http_code}' "$1" 2>/dev/null | grep -qE '^[1-4][0-9][0-9]$'; }
 if [ -z "$CN" ]; then
   if ! reach https://registry-1.docker.io/v2/ || ! reach https://registry.npmjs.org/; then
     warn "访问 Docker Hub 或 npm 官方源不通或很慢：国内网络加 --cn"
@@ -156,8 +260,22 @@ fi
 
 # 域名是否已经解析（隧道模式要解析到云服务器）
 resolve() { { command -v dig >/dev/null 2>&1 && dig +short "$1" A | grep -E '^[0-9.]+$' | head -1; } || { command -v host >/dev/null 2>&1 && host -t A "$1" 2>/dev/null | awk '/has address/ {print $4; exit}'; } || true; }
+port_busy() { # 有别的程序（不是我们自己的 Caddy）在监听这个端口
+  { command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; } \
+    || { command -v ss >/dev/null 2>&1 && ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$1\$"; }
+}
+if [ "$MODE" = "production" ] && [ -n "$INTRANET" ]; then
+  if docker ps --format '{{.Names}}' | grep -q '^yh-caddy$'; then :
+  elif port_busy "$PORT"; then err "端口 $PORT 已经被别的程序占用，换一个：--port 8080"
+  else ok "端口 $PORT 空闲"; fi
+  if [ "$OS" = "Linux" ]; then
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then warn "防火墙 ufw 开着：放行端口 $PORT（sudo ufw allow $PORT/tcp），内网其他电脑才能打开"
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then warn "防火墙 firewalld 开着：放行端口 $PORT（sudo firewall-cmd --permanent --add-port=$PORT/tcp && sudo firewall-cmd --reload）"; fi
+  fi
+fi
 if [ "$MODE" = "production" ]; then
   for h in "$(host_of "$URL")" ${APPS_URL:+"$(host_of "$APPS_URL")"}; do
+    if echo "$h" | grep -qE '^[0-9.]+$'; then ok "用 IP 访问：$h"; continue; fi
     ip="$(resolve "$h")"
     if [ -z "$ip" ]; then warn "域名 $h 还没解析（或这台机器查不到），装完后对外访问前要先解析"
     elif [ -n "$FRP" ] && echo "$FRP" | grep -qE '^[0-9.]+$' && [ "$ip" != "$FRP" ]; then warn "域名 $h 解析到 $ip，不是云服务器 $FRP"
@@ -175,7 +293,8 @@ else
   echo "  公司：  $COMPANY"
   echo "  控制台：$URL"
   echo "  应用：  ${APPS_URL:-（和控制台同一个域名）}"
-  echo "  入口：  $([ -n "$FRP" ] && echo "经云服务器 $FRP 的隧道" || echo "自己在前面配反向代理到本机 127.0.0.1:18080")"
+  if [ -n "$INTRANET" ]; then echo "  入口：  只在内网用，本机监听 0.0.0.0:$PORT（不对外、不配隧道；钉钉 / 飞书 / 企业微信登录用不了，用账号密码）"
+  else echo "  入口：  $([ -n "$FRP" ] && echo "经云服务器 $FRP 的隧道" || echo "自己在前面配反向代理到本机 127.0.0.1:18080")"; fi
   if [ -n "$GIT" ]; then up="Git 原地安装，自动跟踪 release 分支"
   elif [ -n "$UPGRADE_URL" ]; then up="更新包方式，从 $UPGRADE_URL 查新版本"
   else up="更新包方式，不联网查，拷更新包升级"; fi
@@ -267,6 +386,7 @@ fi
 if [ "$MODE" = "production" ]; then
   setkv APPS_URL "$APPS_URL"
   [ -n "$FRP" ] && setkv FRP_SERVER_ADDR "$FRP"
+  if [ -n "$INTRANET" ]; then setkv LOCAL_HTTP_BIND "0.0.0.0"; setkv LOCAL_HTTP_PORT "$PORT"; fi
   [ -d .git ] || setkv UPGRADE_URL "$UPGRADE_URL"
 fi
 ok "yh.env 就绪（权限 600，密钥在下一步生成）"
@@ -334,20 +454,16 @@ if [ "$MODE" = "production" ]; then
 | 平台机器 | $(hostname)（$OS），目录 \`$DEST\` |
 | 控制台 | $URL |
 | 应用域名 | ${APPS_URL:-未配置（生产建议配：yh.env 的 APPS_URL）} |
-| 对外入口 | $([ -n "$FRP" ] && echo "云服务器 $FRP（frp 隧道）" || echo "前置反向代理 → 本机 127.0.0.1:18080") |
+| 对外入口 | $(if [ -n "$INTRANET" ]; then echo "只在内网用：本机 0.0.0.0:$PORT"; elif [ -n "$FRP" ]; then echo "云服务器 $FRP（frp 隧道）"; else echo "前置反向代理 → 本机 127.0.0.1:18080"; fi) |
 | 升级方式 | $([ -d .git ] && echo "Git 原地，自动跟踪 \`$(envv PLATFORM_BRANCH)\` 分支" || echo "更新包：控制台「管理 → 概览」点升级，或 \`./yh upgrade\` / \`./yh upgrade --package <包>\`") |
 | 开机自启 / agent | $([ -n "$AUTO_OK" ] && echo 已安装 || echo "**未安装**：执行 \`$([ "$OS" = Linux ] && echo 'sudo ')./yh autostart\`") |
 
 ## 部署检查清单
 
-- [ ] DNS：\`$(host_of "$URL")\`${APPS_URL:+、\`$(host_of "$APPS_URL")\`} 解析到 $([ -n "$FRP" ] && echo "云服务器 $FRP" || echo "前置反代")
+$(if [ -n "$INTRANET" ]; then echo "- [ ] 内网另一台电脑打开 $URL 能看到登录页（打不开：防火墙放行端口 $PORT）"; else echo "- [ ] DNS：\`$(host_of "$URL")\`${APPS_URL:+、\`$(host_of "$APPS_URL")\`} 解析到 $([ -n "$FRP" ] && echo "云服务器 $FRP" || echo "前置反代")"; fi)
 $([ -n "$FRP" ] && printf '%s\n' "- [ ] 云服务器：安全组放行 TCP 7000、80、443；把本目录的 \`cloud/\` 拷过去执行 \`$CLOUD_CMD\`" "- [ ] 隧道：平台机器上 \`./yh doctor\` 的「隧道已连上云端」「公网访问」都通过")
-- [ ] 打开 $URL 完成初始化向导（管理员账号、平台名称、组织名称）
-- [ ] 管理 → 系统设置 → 外观与主题：选预设、按公司 VI 改颜色，上传公司 LOGO（基本信息）
-- [ ] 管理 → 模型与 AI：加一个模型并「测试」通过
-- [ ] 管理 → 登录方式：按需打开钉钉 / 飞书 / 企业微信（回调地址见部署手册 6.3）
-- [ ] 管理 → 用户与部门：同步通讯录或手动加人，再设一个管理员
-- [ ] 系统设置 → 发布通知：配群机器人并「发测试消息」
+- [ ] 打开 $URL 完成初始化（管理员账号、平台名称），登录后跟着**开通向导**走完：公司信息、外观、大模型（测试通过）、登录方式（测试连接通过）、人员、消息通知（「发一条给我」收到）、应用
+- [ ] 开通向导最后一步「下载开通报告」，和本交付单一起留档
 - [ ] 备份：yh.env 的 \`BACKUP_REMOTE\` 配异地备份；\`./yh backup\` 跑一次，确认 \`backups/\` 下有文件
 - [ ] 按部署手册第 7 节验收；带客户体验一遍（第 8 节）：登录 → 工作台 → 演示应用统一登录 → AI 助手调用应用工具
 - [ ] 把 \`yh.env\` 备份到公司的密码库（丢了数据库里加密保存的密钥就解不开）
@@ -371,11 +487,14 @@ if [ "$MODE" = "test" ]; then
   echo "   接下来照 README「装好后体验」走一遍；用完 ./yh destroy 清掉"
 else
   [ "$WARNINGS" -gt 0 ] && printf '\033[33m   上面有 %s 条提醒，交付前处理掉\033[0m\n' "$WARNINGS"
-  if [ -n "$FRP" ]; then
+  if [ -n "$INTRANET" ]; then
+    echo "   内网里的电脑都能打开 $URL（打不开先查防火墙是否放行端口 $PORT）"
+  elif [ -n "$FRP" ]; then
     echo "   下一步：云服务器上执行（cloud/ 目录拷过去；令牌只在这里和 yh.env 里，别发群）："
     echo "     DOMAIN=$(host_of "$URL")${APPS_URL:+ APPS_DOMAIN=$(host_of "$APPS_URL")} FRP_TOKEN=$(envv FRP_TOKEN) INSTALL_DEPS=1 ./cloud/install.sh"
   else
     echo "   下一步：前置反代把 $URL${APPS_URL:+ 和 $APPS_URL} 转到本机 127.0.0.1:18080（保留 Host 和 X-Forwarded-* 头，关掉响应缓冲）"
   fi
-  echo "   然后打开 $URL 完成初始化向导，再按交付单逐项打勾：$DEST/$SHEET"
+  printf '\033[36m   打开 %s 继续开通\033[0m：浏览器里设管理员账号，然后开通向导一步步配外观、模型、登录方式、人员、应用\n' "$URL"
+  echo "   交付单（逐项打勾）：$DEST/$SHEET"
 fi

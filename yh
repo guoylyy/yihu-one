@@ -373,6 +373,7 @@ cmd_init() {
   fi
   if ! is_test; then
     if [ -n "${FRP_SERVER_ADDR:-}" ]; then echo "   隧道令牌（云服务器安装 frps 时要用）：$FRP_TOKEN"
+    elif [ "${LOCAL_HTTP_BIND:-127.0.0.1}" = "0.0.0.0" ]; then gray "   内网模式：同一网络里的电脑打开 $PUBLIC_URL"
     else gray "   没配隧道：本机 $LOCAL 可访问；公网访问见手册「云端入口」"; fi
   fi
   echo "   下一步：yh autostart（开机自启 + 常驻 agent，控制台里的插拔操作靠它执行）"
@@ -1469,7 +1470,11 @@ cmd_doctor() {
     fi
   fi
   if ! is_test; then
-    chk "公网访问 $PUBLIC_URL" "curl -fsS --max-time 15 $PUBLIC_URL/health" "域名是否解析到入口服务器、云端 install.sh 是否执行"
+    if [ "${LOCAL_HTTP_BIND:-127.0.0.1}" = "0.0.0.0" ] && [ -z "${FRP_SERVER_ADDR:-}" ]; then
+      chk "内网访问 $PUBLIC_URL" "curl -fsS --max-time 15 $PUBLIC_URL/health" "IP 或端口对不上（yh.env 的 PUBLIC_URL / LOCAL_HTTP_PORT），或防火墙没放行"
+    else
+      chk "公网访问 $PUBLIC_URL" "curl -fsS --max-time 15 $PUBLIC_URL/health" "域名是否解析到入口服务器、云端 install.sh 是否执行"
+    fi
   fi
   if apps_mode; then
     # 应用域名的站点会带 X-Yh-Apps 响应头：本机看路由配上了没有，公网看 DNS / 证书 / 隧道通没通
