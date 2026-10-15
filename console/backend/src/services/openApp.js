@@ -74,6 +74,16 @@ export async function notifyUsers(app, body) {
   })
   const found = new Set(users.map(u => u.id))
   const skipped = userIds.filter(id => !found.has(id)).map(userId => ({ userId, reason: '用户不存在、已停用或不在本应用的空间' }))
+  const r = await sendToUsers(users, msg)
+  return { sent: r.sent, skipped: [...skipped, ...r.skipped] }
+}
+
+/**
+ * 按每个人绑定的账号发个人消息（钉钉工作通知 / 飞书卡片 / 企业微信应用消息）。平台内部也用（定时任务推结果）
+ * users: [{ id, dingUserId, feishuOpenId, wecomUserId }]；msg: normalizeNotify 的 msg
+ */
+export async function sendToUsers(users, msg) {
+  const skipped = []
   const can = { dingtalk: await dingtalk.canNotify(), feishu: await feishu.configured(), wecom: await wecom.configured() }
 
   const groups = { dingtalk: [], feishu: [], wecom: [] }

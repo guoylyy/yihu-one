@@ -8,6 +8,7 @@ import { audit } from '../lib/audit.js'
 import { assertAdmin, sha256 } from '../lib/auth.js'
 import { badRequest, notFound } from '../lib/http.js'
 import { validIcon, validColor } from '../lib/icon.js'
+import { forgetAppTools } from '../agent/appTools.js'
 import { briefMap } from './users.js'
 import { newSecret } from './apps.js'
 import { getInfo, checkUpgradeOp } from './upgrade.js'
@@ -62,6 +63,7 @@ export async function registerApp(b) {
         kind: 'HOSTED', scope: 'MARKET', listed: true, trusted: true
       }
     })
+  forgetAppTools(app.code)
   audit(SYSTEM, existing ? 'platform.app.update' : 'platform.app.register', { entityType: 'app', entityId: app.id, detail: { code: app.code, url: app.url, secretIssued: !!secret } })
   return { id: app.id, code: app.code, created: !existing, clientId: app.code, clientSecret: secret }
 }

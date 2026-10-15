@@ -57,6 +57,46 @@ async function seedDefaultContent(admin) {
   await prisma.app.update({ where: { id: app.id }, data: { liveVersionId: v.id } })
 }
 
+// 老板助理：给管理层的预置 AI 助手（docs/设计-老板应用.md）。新装时随向导建好，老平台升级后控制台启动时补建
+export const BOSS_AGENT_CODE = 'boss-assistant'
+const BOSS_PROMPT = [
+  '你是老板（公司管理层）的 AI 助理。你能读平台上所有应用的数据和公司知识库，帮老板快速掌握公司状况、做决定。',
+  '回答规则：',
+  '1. 先给结论，再给支撑的数字和事实；数字带单位，注明来自哪个应用。',
+  '2. 问公司整体情况、今天要关注什么、有什么风险时，先调用 get_business_overview 拿各应用的关键指标、变化与风险、待决策事项，再按需查具体应用。',
+  '3. 不知道就说不知道，绝不编造数字；数据不全时说明缺了哪块。',
+  '4. 你不能替老板改任何数据。老板要做的决定（审批、回复、指派），给出建议和对应应用的入口链接，由他自己确认。',
+  '5. 简洁：手机上一屏能看完；多条用列表，对比用表格。'
+].join('\n')
+
+/** 建老板助理（已经有就不动，管理员改过的设定、可见范围都保留） */
+export async function ensureBossAssistant() {
+  if (await prisma.app.findUnique({ where: { code: BOSS_AGENT_CODE } })) return
+  const admin = await prisma.user.findFirst({ where: { deletedAt: null, roles: { array_contains: ['ADMIN'] } }, orderBy: { id: 'asc' } })
+  if (!admin) return // 还没初始化：向导建管理员时再建
+  const app = await prisma.app.create({
+    data: {
+      code: BOSS_AGENT_CODE, name: '老板助理', icon: 'svg:chart', iconColor: '#1c1917',
+      description: '给管理层的 AI 助理：随时问公司状况、风险和待决定的事，每天推送经营简报',
+      category: 'AI 助手', kind: 'AGENT', type: 'NONE', scope: 'MARKET', listed: true, trusted: true, isDefault: false, status: 'ACTIVE',
+      // 默认只给管理员和部门负责人（LEADER），管理员可以在创作中心里改
+      visibility: { roles: ['ADMIN', 'LEADER'] },
+      publisherId: admin.id, ownerId: admin.id
+    }
+  })
+  const v = await prisma.appVersion.create({
+    data: {
+      appId: app.id, version: 'v1', status: 'APPROVED', targetScope: 'MARKET', createdBy: admin.id,
+      payload: {
+        prompt: BOSS_PROMPT, tools: [], allReadOnly: true, modelId: null,
+        starters: ['今天公司有什么需要我关注的？', '这个月哪些项目有风险？', '有哪些事等我拍板？', '帮我生成一份经营简报'],
+        greeting: '您好，我是您的老板助理。可以问我公司现在的状况、风险和需要您决定的事；也可以让我每天早上把经营简报推到您的手机上。'
+      }
+    }
+  })
+  await prisma.app.update({ where: { id: app.id }, data: { liveVersionId: v.id } })
+}
+
 /** 向导提交：{ admin: { username, name, password }, site: { workspaceName, workspaceSubtitle } } */
 export async function setup(body = {}) {
   if (await isReady()) throw forbidden('系统已完成初始化，无需再次执行向导')
@@ -91,6 +131,7 @@ export async function setup(body = {}) {
   }
 
   await seedDefaultContent(user)
+  await ensureBossAssistant()
 
   audit({ user, via: 'WEB', ip: null }, 'setup.complete', { entityType: 'user', entityId: user.id, detail: { username } })
   return { ok: true }

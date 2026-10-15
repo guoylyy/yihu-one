@@ -411,6 +411,27 @@ api PUT "/api/admin/spaces/$SP2" -d '{"brand":{"name":"兄弟工作台","theme":
 HINT="兄弟公司空间的王五应拿到空间 VI，张三（默认空间）跟随平台"; check "VI：空间自己的 VI 只给空间里的人" sh -c "curl -s $B/api/me -H 'Authorization: Bearer $T_WW' | jq -e '.data.brand.name == \"兄弟工作台\" and .data.brand.theme.tokens.primary == \"#0f766e\"' && curl -s $B/api/me -H 'Authorization: Bearer $T_ZS' | jq -e '.data.brand == null'"
 HINT="普通员工不能改 VI"; check "VI：只有管理员能改" sh -c "curl -s -X PUT $B/api/admin/settings/appearance -H 'Authorization: Bearer $T_ZS' -H '$J' -d '{\"theme\":{\"preset\":\"classic\"}}' | jq -e '.code != 0'"
 
+title "15. 老板应用：标准工具汇总、老板助理、定时简报（只读）、管理层首页"
+# 第 5 节结束时停了假模型，定时任务要用它，重新起一个
+docker rm -f yhst-llm >/dev/null 2>&1
+docker run -d --name yhst-llm --network yh-net -v "$DIR/scripts/mock-llm.mjs:/m.mjs:ro" node:20-alpine node /m.mjs >/dev/null 2>&1
+for i in $(seq 1 20); do docker logs yhst-llm 2>/dev/null | grep -q ready && break; sleep 1; done
+# demo-node 加上三个标准工具（老板的简报和首页按名字认）
+DN_SRV="$DIR/apps/demo-node/src/server.js"
+perl -0pi -e 's/const TOOLS = \[\n/const TOOLS = [\n  { name: "get_key_metrics", description: "关键指标", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true }, run: () => ({ metrics: [{ name: "自测指标", value: 42, unit: "个", trend: "up", good: true }] }) },\n  { name: "get_daily_summary", description: "变化与风险", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true }, run: () => ({ items: [{ title: "普通动态", level: "info" }, { title: "自测风险", level: "risk", url: "javascript:alert(1)" }] }) },\n  { name: "list_pending_decisions", description: "待决策", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true }, run: () => ({ items: [{ id: 1, title: "自测待审批", requester: "张三" }] }) },\n/' "$DN_SRV"
+$YH up demo-node >> demo.log 2>&1
+OV="$(mcp "$KEY" '{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"get_business_overview","arguments":{}}}' | sed -n 's/^data: //p;/^{/p' | jq -r '.result.content[0].text' 2>/dev/null)"
+HINT="张三应拿到 demo-node 的指标、风险在前、待决策；结果：$(echo "$OV" | head -c 300)"; check "标准工具：经营概览汇总各应用" sh -c "echo '$OV' | jq -e '.apps[] | select(.code==\"demo-node\") | (.metrics[0].name == \"自测指标\" and .events[0].level == \"risk\" and .events[0].url == null and .decisions[0].title == \"自测待审批\")'"
+HINT="首页卡片接口应给扁平数据"; check "标准工具：管理层首页的数据" sh -c "curl -s $B/api/me/overview -H 'Authorization: Bearer $T_ZS' | jq -e '.data.hasSources and (.data.metrics | length) >= 1 and .data.decisions[0].app != null'"
+HINT="管理员能看到老板助理，普通员工李四看不到"; check "老板助理：只给管理层" sh -c "curl -s $B/api/market/apps -H 'Authorization: Bearer $T' | jq -e '[.data.apps[].code] | index(\"boss-assistant\")' && curl -s $B/api/market/apps -H 'Authorization: Bearer $T_LS' | jq -e '[.data.apps[].code] | index(\"boss-assistant\") == null'"
+HINT="管理员默认是管理层首页，张三是普通首页"; check "管理层首页：管理员默认" sh -c "curl -s $B/api/me/home -H 'Authorization: Bearer $T' | jq -e '.data.template == \"boss\" and ([.data.cards[].type] | index(\"metrics\"))' && curl -s $B/api/me/home -H 'Authorization: Bearer $T_ZS' | jq -e '.data.template == \"default\"'"
+LLM_LINES="$(docker logs yhst-llm 2>/dev/null | wc -l | tr -d ' ')"
+curl -s -X POST $B/api/me/brief -H "Authorization: Bearer $T_ZS" -H "$J" -d '{"kind":"weekdays","time":"08:00"}' > /dev/null
+for i in $(seq 1 30); do BR="$(curl -s $B/api/me/brief -H "Authorization: Bearer $T_ZS")"; [ "$(echo "$BR" | jq -r .data.lastStatus)" = "RUNNING" ] || break; sleep 2; done
+HINT="简报应跑完、存成对话；没配消息渠道时注明没推送：$(echo "$BR" | jq -c '.data | {lastStatus, lastError, lastConversationId}')"; check "定时任务：开通简报立即生成一份" sh -c "printf '%s' '$BR' | jq -e '.data.lastStatus == \"OK\" and (.data.lastResult | test(\"MOCK\")) and .data.lastConversationId != null and (.data.lastError | test(\"没有推送\")) and .data.scheduleText == \"工作日 08:00\" and .data.nextRunAt != null'"
+HINT="定时任务里给模型的工具不应有写操作"; check "定时任务：只给只读工具" sh -c "docker logs yhst-llm 2>/dev/null | tail -n +$((LLM_LINES + 1)) | grep '\"tools\"' | head -1 | jq -e '(.tools | length) > 0 and (.tools | index(\"set_my_home\") == null) and (.tools | index(\"create_daily_brief\") == null) and (.tools | index(\"publish_app\") == null) and (.tools | index(\"get_business_overview\") != null)'"
+HINT="每人的定时任务数有上限、频率要合法"; check "定时任务：校验" sh -c "curl -s -X POST $B/api/me/scheduled-tasks -H 'Authorization: Bearer $T_ZS' -H '$J' -d '{\"name\":\"x\",\"prompt\":\"y\",\"schedule\":{\"kind\":\"hourly\",\"time\":\"08:00\"}}' | jq -e '.code != 0'"
+
 # ---- 结果 ----
 printf '\n━━━━━━━━ 结果：%s 项通过，%s 项失败 ━━━━━━━━' "$pass" "$fail"
 printf "$results\n"

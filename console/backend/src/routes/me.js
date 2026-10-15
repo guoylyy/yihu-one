@@ -10,6 +10,8 @@ import { TOOLS } from '../tools/index.js'
 import { loadAppTools } from '../agent/appTools.js'
 import * as apps from '../services/apps.js'
 import * as home from '../services/home.js'
+import * as overview from '../services/overview.js'
+import * as schedule from '../services/schedule.js'
 import { get as getSetting } from '../services/settings.js'
 
 const router = express.Router()
@@ -28,6 +30,16 @@ router.get('/me/home', wrap(req => home.getHome(req.ctx)))
 router.put('/me/home', wrap(req => home.saveHome(req.ctx, req.body?.cards)))
 router.delete('/me/home', wrap(req => home.resetHome(req.ctx)))
 router.get('/me/home/cards/:id/data', wrap(req => home.cardData(req.ctx, req.params.id)))
+router.post('/me/home/template', wrap(req => home.applyTemplate(req.ctx, req.body?.name)))
+// 经营概览（管理层首页的指标、待我决策、风险与动态卡片）与定时任务
+router.get('/me/overview', wrap(req => overview.overviewForHome(req.ctx)))
+router.get('/me/scheduled-tasks', wrap(req => schedule.list(req.ctx)))
+router.post('/me/scheduled-tasks', wrap(req => schedule.create(req.ctx, req.body || {})))
+router.put('/me/scheduled-tasks/:id', wrap(req => schedule.update(req.ctx, req.params.id, req.body || {})))
+router.delete('/me/scheduled-tasks/:id', wrap(req => schedule.remove(req.ctx, req.params.id)))
+router.post('/me/scheduled-tasks/:id/run', wrap(req => schedule.runNow(req.ctx, req.params.id)))
+router.post('/me/brief', wrap(req => schedule.createBrief(req.ctx, req.body || {})))
+router.get('/me/brief', wrap(req => schedule.latestBrief(req.ctx)))
 
 /** 我的助手：默认助手并入哪些应用的工具（按应用关掉） */
 router.get('/me/assistant-apps', wrap(async (req) => {

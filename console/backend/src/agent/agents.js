@@ -39,7 +39,8 @@ export async function toolsFor(user, agent) {
   const all = await allToolsFor(user)
   if (agent) {
     const want = new Set(agent.payload.tools || [])
-    return all.filter(t => want.has(t.name))
+    // allReadOnly：能用全部只读工具（平台的 + 这个用户能看到的应用的），应用以后新增的只读工具也自动可用；另选的写工具照常加上
+    return all.filter(t => want.has(t.name) || (agent.payload.allReadOnly && !t.write))
   }
   const off = new Set(Array.isArray(user.prefs?.assistantOffApps) ? user.prefs.assistantOffApps : [])
   return off.size ? all.filter(t => !t.appCode || !off.has(t.appCode)) : all

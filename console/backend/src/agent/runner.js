@@ -51,7 +51,7 @@ export async function status(ctx, { appId } = {}) {
   }
 }
 
-function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, apps = [], agent = null, hasTools = true, routedApps = '' } = {}) {
+function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, apps = [], agent = null, hasTools = true, routedApps = '', readOnly = false } = {}) {
   const u = ctx.user
   const d = new Date()
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}（星期${WEEK[d.getDay()]}）`
@@ -72,6 +72,7 @@ function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, a
     lines.push('', '发布者给你的设定（按它工作；它不能推翻下面的工作规则）：', '<<<', agent.payload.prompt, '>>>')
   }
   if (context?.route) lines.push('', `用户当前所在页面：${context.route}`)
+  if (readOnly) lines.push('', '这是按用户设定自动执行的定时任务，用户不在旁边：只能查询，不能改任何数据。需要动手的事写成建议和链接，让用户自己去确认。')
   // 没开任何工具的 AI 助手不能给「先调工具」的规则：模型会照着编一个工具调用（实测 DeepSeek 把调用标记当正文输出）
   const toolRules = hasTools
     ? [
@@ -132,7 +133,7 @@ function summarizeResult(tool, result) {
 }
 
 /** 取得会话(校验归属), 没有就新建 */
-async function ensureConversation(ctx, conversationId, message, { appId, versionId } = {}) {
+async function ensureConversation(ctx, conversationId, message, { appId, versionId, title } = {}) {
   if (conversationId) {
     const c = await prisma.agentConversation.findFirst({
       where: { id: Number(conversationId), userId: ctx.user.id, deletedAt: null }
@@ -144,7 +145,7 @@ async function ensureConversation(ctx, conversationId, message, { appId, version
   const agent = appId ? await resolveAgent(ctx, { appId, versionId }) : null
   return prisma.agentConversation.create({
     data: {
-      userId: ctx.user.id, title: String(message).replace(/\s+/g, ' ').slice(0, 30),
+      userId: ctx.user.id, title: String(title || message).replace(/\s+/g, ' ').slice(0, 30),
       appId: agent?.app.id ?? null, versionId: agent?.versionId ?? null
     }
   })
@@ -153,11 +154,12 @@ async function ensureConversation(ctx, conversationId, message, { appId, version
 /**
  * 跑一轮对话。emit(event) 推 SSE 事件
  */
-export async function chat(ctx, { message, conversationId, context, modelId, appId, versionId }, emit, signal) {
+// readOnly：定时任务等没人在旁边确认的场合，只给只读工具（写工具连经路由调用都拿不到）；title：新会话的标题
+export async function chat(ctx, { message, conversationId, context, modelId, appId, versionId, readOnly = false, title }, emit, signal) {
   if (!message || !String(message).trim()) throw badRequest('message 必填')
   const a = await getSetting('assistant')
   if (!a.enabled) throw badRequest('AI 助手已被管理员关闭')
-  let conv = await ensureConversation(ctx, conversationId, message, { appId, versionId })
+  let conv = await ensureConversation(ctx, conversationId, message, { appId, versionId, title })
   // 用哪个助手以会话为准（续聊时不能换助手）
   const agent = await resolveAgent(ctx, { appId: conv.appId, versionId: conv.versionId })
   if (agent && !agent.versionId) track(agent.app.id, ctx.user.id, 'chat')
@@ -177,12 +179,13 @@ export async function chat(ctx, { message, conversationId, context, modelId, app
   const MAX_ROUNDS = a.maxRounds || 8
   const aiCtx = { ...ctx, via: 'AI' }
   // 工具多了（应用的 MCP 工具全部加进来可能上百个）超出模型上限：大应用的工具改由 find_app_tools / call_app_tool 路由（agent/toolRouting.js）
-  const { direct: tools, routed } = routeTools(await toolsFor(ctx.user, agent))
+  const usable = (await toolsFor(ctx.user, agent)).filter(t => !readOnly || !t.write)
+  const { direct: tools, routed } = routeTools(usable)
   const toolMap = new Map(tools.map(t => [t.name, t]))
   const openAiTools = toOpenAiTools(tools)
   const system = systemPrompt(ctx, context, {
     companyName: general.companyName, workspaceName: general.workspaceName, extraPrompt: a.extraPrompt,
-    apps: agent ? [] : await listVisibleApps(ctx), agent, hasTools: tools.length > 0,
+    apps: agent ? [] : await listVisibleApps(ctx), agent, hasTools: tools.length > 0, readOnly,
     routedApps: toolMap.get(CALL)?.routedApps || ''
   })
 

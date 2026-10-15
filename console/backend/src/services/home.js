@@ -16,8 +16,12 @@ import { badRequest, notFound } from '../lib/http.js'
 import { allToolsFor } from '../agent/agents.js'
 import { runTool } from '../tools/index.js'
 import * as apps from './apps.js'
+import { get as getSetting } from './settings.js'
+import { isAdmin } from '../lib/auth.js'
 
-export const TYPES = ['greeting', 'setup', 'assistant', 'apps', 'app', 'link', 'text', 'data']
+// metrics 关键指标 / decisions 待我决策 / events 风险与动态：来自各应用的标准工具（services/overview.js）；brief 最新一次经营简报
+export const TYPES = ['greeting', 'setup', 'assistant', 'apps', 'app', 'link', 'text', 'data', 'metrics', 'decisions', 'events', 'brief']
+const OVERVIEW_TYPES = ['metrics', 'decisions', 'events', 'brief']
 export const VIEWS = ['auto', 'number', 'list', 'table', 'line']
 const MAX_CARDS = 30
 const DATA_TIMEOUT_MS = 15_000
@@ -29,6 +33,25 @@ export const TEMPLATE = [
   { id: 'assistant', type: 'assistant' },
   { id: 'apps', type: 'apps' }
 ]
+
+/** 管理层首页：打开平台第一眼就是公司状况（docs/设计-老板应用.md） */
+export const BOSS_TEMPLATE = [
+  { id: 'greeting', type: 'greeting' },
+  { id: 'setup', type: 'setup' },
+  { id: 'brief', type: 'brief', title: '最新简报' },
+  { id: 'metrics', type: 'metrics', title: '关键指标' },
+  { id: 'decisions', type: 'decisions', title: '待我决策', width: 'half' },
+  { id: 'events', type: 'events', title: '风险与动态', width: 'half' },
+  { id: 'assistant', type: 'assistant' },
+  { id: 'apps', type: 'apps' }
+]
+export const TEMPLATES = { default: TEMPLATE, boss: BOSS_TEMPLATE }
+
+/** 没自己改过首页时用哪个模板：管理员、部门负责人默认用管理层首页（系统设置 → AI 助手里可以关） */
+async function defaultTemplate(user) {
+  const leader = isAdmin(user) || (user.leaderOf?.length > 0)
+  return leader && (await getSetting('assistant')).leaderHome !== false ? { cards: BOSS_TEMPLATE, name: 'boss' } : { cards: TEMPLATE, name: 'default' }
+}
 
 const str = (v, max, label) => {
   const s = v == null ? '' : String(v).trim()
@@ -73,6 +96,7 @@ export function normalizeCards(input, readOnlyTools = null) {
       out.text = str(c.text, 2000, '文字')
       if (!out.text) throw badRequest(`第 ${i + 1} 张卡片（文字）没有内容`)
     }
+    if (OVERVIEW_TYPES.includes(type)) out.title = str(c.title, 40, '标题') || undefined
     if (type === 'data') {
       out.title = str(c.title, 40, '标题') || '数据'
       out.tool = str(c.tool, 120, '工具名')
@@ -100,16 +124,19 @@ async function freshPrefs(userId) {
 export async function getHome(ctx, { withCatalog = true } = {}) {
   const prefs = await freshPrefs(ctx.user.id)
   const home = prefs.home
+  const custom = !!(home && Array.isArray(home.cards))
+  const tpl = custom ? null : await defaultTemplate(ctx.user)
   const out = {
-    custom: !!(home && Array.isArray(home.cards)),
-    cards: home && Array.isArray(home.cards) ? home.cards : TEMPLATE,
+    custom,
+    cards: custom ? home.cards : tpl.cards,
+    template: tpl?.name || null,
     updatedAt: home?.updatedAt || null,
     source: home?.source || 'template'
   }
   if (withCatalog) {
     const [mine, tools] = await Promise.all([apps.listMyApps(ctx), dataTools(ctx.user)])
     out.catalog = {
-      types: TYPES, views: VIEWS,
+      types: TYPES, views: VIEWS, templates: Object.keys(TEMPLATES),
       apps: mine.map(a => ({ id: a.id, name: a.name, icon: a.icon, description: a.description })),
       tools: tools.map(t => ({ name: t.name, label: t.label, description: t.description, appName: t.appName || null }))
     }
@@ -134,7 +161,15 @@ export async function resetHome(ctx) {
     await prisma.user.update({ where: { id: ctx.user.id }, data: { prefs: rest } })
     audit(ctx, 'home.reset', { entityType: 'user', entityId: ctx.user.id })
   }
-  return { custom: false, cards: TEMPLATE, updatedAt: null, source: 'template' }
+  const tpl = await defaultTemplate(ctx.user)
+  return { custom: false, cards: tpl.cards, template: tpl.name, updatedAt: null, source: 'template' }
+}
+
+/** 套用模板（default 默认 / boss 管理层）：存成自己的首页，之后照常增删 */
+export async function applyTemplate(ctx, name) {
+  const cards = TEMPLATES[name]
+  if (!cards) throw badRequest(`没有模板「${name}」，可选：${Object.keys(TEMPLATES).join(' / ')}`)
+  return saveHome(ctx, cards)
 }
 
 /** 数据卡片取数：只能取自己首页上的卡片，以本人身份调只读工具；超时、结果过大都给可读的错误 */

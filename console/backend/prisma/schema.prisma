@@ -414,6 +414,36 @@ model LlmConfig {
   deletedAt   DateTime?
 }
 
+/// 定时 AI 任务：到点以创建者本人身份跑一次 AI 助手（只读），结果存成对话并推到本人的钉钉 / 飞书 / 企业微信（services/schedule.js）
+model ScheduledTask {
+  id                 Int       @id @default(autoincrement())
+  userId             Int
+  name               String    @db.VarChar(60)
+  prompt             String    @db.Text
+  /// 用哪个 AI 助手（AGENT 应用 id），空 = 默认助手
+  agentAppId         Int?
+  /// { kind: daily | weekdays | weekly, time: "HH:mm", weekday?: 1~7（周一 = 1） }
+  schedule           Json
+  /// 模板：brief = 每日经营简报（首页「最新简报」卡片取它的结果）
+  template           String?   @db.VarChar(20)
+  enabled            Boolean   @default(true)
+  nextRunAt          DateTime?
+  lastRunAt          DateTime?
+  /// OK / FAILED / RUNNING
+  lastStatus         String?   @db.VarChar(20)
+  lastError          String?   @db.VarChar(500)
+  lastConversationId Int?
+  /// 结果正文（推送和首页卡片用，不超过 4000 字）
+  lastResult         String?   @db.Text
+  failCount          Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  @@index([userId])
+  @@index([enabled, nextRunAt])
+}
+
 model AgentConversation {
   id        Int            @id @default(autoincrement())
   userId    Int

@@ -16,6 +16,8 @@ import * as skills from '../services/skills.js'
 import * as publishing from '../services/publishing.js'
 import * as home from '../services/home.js'
 import * as assets from '../services/assets.js'
+import * as overview from '../services/overview.js'
+import * as schedule from '../services/schedule.js'
 import { spaceWhere } from '../services/spaces.js'
 import { permissionsOf } from '../lib/auth.js'
 
@@ -173,6 +175,7 @@ export const TOOLS = [
       '取当前用户的首页布局（cards，从上到下的顺序）和编辑目录：能放的应用（catalog.apps）、能用在数据卡片上的只读工具（catalog.tools）。改首页前先调用。',
       '卡片类型：greeting 问候 / setup 管理员开始配置 / assistant AI 助手输入框 / apps 我的应用 / app 单个应用入口 {appId} / link 外链 {title,url} / text 文字 {title,text}（纯文本）/ ',
       'data 数据卡片 {title, tool, args, view, x, y, field}：以用户本人身份调一个只读工具，view = auto 自动 | number 数字 | list 列表 | table 表格 | line 折线（x、y 填结果数组里对象的字段名）；结果是对象时用 field 指定取哪一层（如 data.list）。',
+      '管理层用的卡片：metrics 关键指标 / decisions 待我决策 / events 风险与动态 / brief 最新经营简报（{title} 可选，数据来自各应用的标准工具，不用指定 tool）。',
       '每张卡片可以带 width: half（两张并排）、hidden: true。'
     ].join(''),
     schema: {},
@@ -190,6 +193,57 @@ export const TOOLS = [
     confirm: true,
     summarize: (a) => (a?.reset ? '把首页恢复成默认的样子' : `把首页改成 ${a?.cards?.length || 0} 张卡片：${(a?.cards || []).map(c => c.title || c.type).join('、').slice(0, 80)}`),
     run: (ctx, a) => (a.reset ? home.resetHome(ctx) : home.saveHome(ctx, a.cards || []))
+  },
+  // ---------- 经营概览与定时任务：给老板的简报、老板助理、管理层首页（docs/设计-老板应用.md） ----------
+  {
+    name: 'get_business_overview',
+    label: '查看经营概览',
+    description: [
+      '一次取全公司的经营概览：所有接入了经营数据的应用的关键指标（metrics）、变化与风险（events，level = risk / warn / info）、等当前用户拍板的事项（decisions）。',
+      '用户问公司整体情况、今天要关注什么、有哪些风险、有什么事等他决定、要经营简报时先调它，再按需查具体应用的工具。',
+      'apps 为空表示还没有应用提供经营数据；某个应用的 errors 不为空表示它这次没取到，如实告诉用户。'
+    ].join(''),
+    schema: {
+      since: z.string().optional().describe('变化从什么时候算起，ISO 时间，默认 24 小时前'),
+      period: z.enum(['today', 'week', 'month']).optional().describe('指标口径，默认 month')
+    },
+    run: (ctx, a) => overview.businessOverview(ctx, a)
+  },
+  {
+    name: 'list_my_scheduled_tasks',
+    label: '查看我的定时任务',
+    description: '列出当前用户的定时 AI 任务（如每日经营简报）：名称、频率、下次运行时间、上次结果。',
+    schema: {},
+    run: (ctx) => schedule.list(ctx)
+  },
+  {
+    name: 'create_daily_brief',
+    label: '开通每日经营简报',
+    description: '给当前用户开通每日经营简报：到点汇总各应用的关键指标、风险和待决策事项，推到他的钉钉 / 飞书 / 企业微信。已开通就改时间。开通后立即生成第一份。用户说「每天早上给我发简报」时用它。',
+    schema: {
+      kind: z.enum(['daily', 'weekdays']).optional().describe('daily 每天 / weekdays 工作日（默认）'),
+      time: z.string().optional().describe('几点，HH:mm，默认 08:00')
+    },
+    write: true,
+    confirm: true,
+    summarize: (a) => `开通每日经营简报：${a?.kind === 'daily' ? '每天' : '工作日'} ${a?.time || '08:00'} 推到你的手机，现在先生成第一份`,
+    run: (ctx, a) => schedule.createBrief(ctx, a || {})
+  },
+  {
+    name: 'create_scheduled_task',
+    label: '新建定时任务',
+    description: '新建一个定时 AI 任务：到点以用户本人身份让 AI 助手做一件事（只能查、不能改数据），结果推到他的钉钉 / 飞书 / 企业微信，并存成对话。例如「每周五 17:00 总结本周项目进展」。每日经营简报用 create_daily_brief。',
+    schema: {
+      name: z.string().describe('任务名称，如「本周项目进展」'),
+      prompt: z.string().describe('到点时让助手做什么，写完整，像对助手说话一样'),
+      kind: z.enum(['daily', 'weekdays', 'weekly']).describe('每天 / 工作日 / 每周'),
+      time: z.string().describe('几点，HH:mm'),
+      weekday: z.number().optional().describe('每周的话星期几，1 = 周一 … 7 = 周日')
+    },
+    write: true,
+    confirm: true,
+    summarize: (a) => `新建定时任务「${a?.name}」：${schedule.describeSchedule({ kind: a?.kind, time: a?.time, weekday: a?.weekday })}，${String(a?.prompt || '').slice(0, 60)}`,
+    run: (ctx, a) => schedule.create(ctx, { name: a.name, prompt: a.prompt, schedule: { kind: a.kind, time: a.time, weekday: a.weekday } })
   },
   // ---------- 资料中心：公司的模板、品牌 VI、设计组件（资料是素材，Skill 是做法） ----------
   {

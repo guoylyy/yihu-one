@@ -58,6 +58,8 @@
     </div>
 
     <!-- MCP -->
+    <ScheduledTasks />
+
     <div class="yh-card" v-loading="mcpLoading">
       <div class="yh-card-header">
         <div>
@@ -116,6 +118,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, EditPen } from '@element-plus/icons-vue'
 import UserAvatar from '@/components/UserAvatar.vue'
+import ScheduledTasks from '@/components/ScheduledTasks.vue'
 import { meApi } from '@/api/me'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'

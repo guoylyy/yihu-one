@@ -24,6 +24,8 @@ import kbRouter from './routes/kb.js'
 import { oidcRouter, discoveryHandler } from './routes/oidc.js'
 import assetsRouter, { downloadHandler as assetDownload } from './routes/assets.js'
 import { startKbWorker } from './services/kbdoc.js'
+import { startScheduler } from './services/schedule.js'
+import { ensureBossAssistant } from './services/setup.js'
 import * as settings from './services/settings.js'
 
 // 出网（模型、钉钉等）：Node 默认 IPv6/IPv4 竞速、每个地址只等 250ms，容器里 IPv6 不通且对端延迟稍高时会直接 ETIMEDOUT。
@@ -99,5 +101,8 @@ if (staticDir && fs.existsSync(path.join(staticDir, 'index.html'))) {
 const port = Number(process.env.PORT) || 3105
 startKbWorker()
 bootstrap()
+  // 老平台升级上来补建老板助理；定时任务每分钟检查一次（单元测试不起）
+  .then(() => ensureBossAssistant())
+  .then(() => (process.env.NODE_ENV === 'test' ? null : startScheduler()))
   .catch(e => console.error('[yh-console] 初始化失败:', e.message))
   .finally(() => app.listen(port, () => console.log(`[yh-console] listening on :${port}`)))

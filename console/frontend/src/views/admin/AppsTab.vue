@@ -216,6 +216,7 @@
               <UserSelect v-model="dlg.form.visUserIds" multiple :initial="dlg.visUserInitial" placeholder="指定用户" />
               <el-checkbox-group v-model="dlg.form.visRoles">
                 <el-checkbox value="ADMIN">管理员</el-checkbox>
+                <el-checkbox value="LEADER">部门负责人</el-checkbox>
                 <el-checkbox value="MEMBER">所有成员</el-checkbox>
               </el-checkbox-group>
               <div class="yh-muted small">满足任一条件即可见；管理员总是能看到</div>

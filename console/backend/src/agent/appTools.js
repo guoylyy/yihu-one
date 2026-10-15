@@ -10,6 +10,12 @@ import { visibleTo } from '../services/apps.js'
 const LIST_TTL = 5 * 60_000
 const listCache = new Map() // appCode -> { at, tools }
 
+/** 应用重新登记（每次 yh up / 发布）时清掉它的工具缓存：新加的工具马上能用，不用等 5 分钟 */
+export function forgetAppTools(code) {
+  if (code) listCache.delete(code)
+  else listCache.clear()
+}
+
 const safeName = (s) => s.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)
 
 async function withClient(app, userId, fn) {
@@ -53,6 +59,7 @@ export async function loadAppTools(user) {
       const readOnly = t.annotations?.readOnlyHint === true
       out.push({
         name: safeName(`${app.code}__${t.name}`),
+        toolName: t.name, // 应用里的原名：经营概览按它认标准工具（services/overview.js）
         label: `${app.name}：${t.title || t.annotations?.title || t.name}`,
         description: `[应用：${app.name}] ${t.description || ''}`,
         jsonSchema: { ...(t.inputSchema || { type: 'object', properties: {} }) },

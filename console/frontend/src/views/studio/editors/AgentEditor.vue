@@ -24,6 +24,10 @@
             <span>可以用的工具 <span class="yh-muted">{{ payload.tools.length }}</span></span>
           </template>
           <div class="tools">
+            <div class="all-ro">
+              <el-switch v-model="payload.allReadOnly" />
+              <span>全部只读工具<span class="yh-muted">（平台的和用户能看到的所有应用的查询类工具，应用以后新增的也自动可用；适合汇总、问答类助手。会改数据的工具仍需在下面单独勾选）</span></span>
+            </div>
             <el-input v-model="toolKw" size="small" placeholder="搜索工具" clearable class="tool-kw" />
             <div v-loading="toolsLoading" class="tool-list">
               <div v-for="g in toolGroups" :key="g.name" class="tool-group">
@@ -168,6 +172,7 @@ onMounted(async () => {
 .rh-title { font-weight: 600; }
 .chat-wrap { flex: 1; min-height: 0; position: relative; }
 .tools { width: 100%; }
+.all-ro { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.6; margin-bottom: 8px; }
 .tool-kw { margin-bottom: 8px; max-width: 260px; }
 .tool-list { border: 1px solid var(--yh-border-soft); border-radius: 10px; max-height: 360px; overflow-y: auto; padding: 4px 8px; background: var(--yh-card); margin-bottom: 6px; }
 .tool-group + .tool-group { border-top: 1px solid var(--yh-border-soft); }

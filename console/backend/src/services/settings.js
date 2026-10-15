@@ -24,7 +24,8 @@ export const SCHEMA = {
       logo: { label: 'LOGO', type: 'image', default: '', help: '侧边栏、登录页、授权页、开发中心和浏览器标签页图标都用它；建议正方形 PNG / SVG，不超过 200KB。不设置用「外观与主题」里预设自带的 LOGO（以虎科技 VI 是以虎标志），预设没有 LOGO 时显示平台名称的第一个字' },
       companyName: { label: '组织名称', type: 'text', default: '', help: 'AI 助手的系统提示里会用到' },
       publicBaseUrl: { label: '访问地址', type: 'url', env: 'PUBLIC_URL', default: 'http://localhost:18080', help: '用户浏览器里打开的地址；钉钉回调、应用地址都基于它。yh init 时已写好，换域名后同步修改' },
-      devCenterPublic: { label: '开发中心免登录访问', type: 'bool', default: true, help: '关掉后需要登录才能看开发文档' }
+      devCenterPublic: { label: '开发中心免登录访问', type: 'bool', default: true, help: '关掉后需要登录才能看开发文档' },
+      timezone: { label: '时区', type: 'text', default: 'Asia/Shanghai', help: '定时任务（如每天 8 点的经营简报）按这个时区算时间，IANA 写法，如 Asia/Shanghai、Asia/Singapore' }
     }
   },
   appearance: {
@@ -126,7 +127,9 @@ export const SCHEMA = {
       assistantName: { label: '助手名称', type: 'text', default: 'AI 助手' },
       extraPrompt: { label: '补充规则', type: 'textarea', default: '', help: '追加到每个助手的系统提示里，如组织术语、特殊规定' },
       suggestions: { label: '快捷问题', type: 'list', default: ['我能用哪些应用？', '这些应用分别能帮我做什么？'] },
-      maxRounds: { label: '单轮最多调用工具次数', type: 'number', default: 8, min: 1, max: 20 }
+      maxRounds: { label: '单轮最多调用工具次数', type: 'number', default: 8, min: 1, max: 20 },
+      tasksPerUser: { label: '每人最多定时任务数', type: 'number', default: 10, min: 0, max: 100, help: '定时 AI 任务（每日经营简报等）；0 = 关闭定时任务' },
+      leaderHome: { label: '管理层默认用「管理层」首页', type: 'bool', default: true, help: '管理员和部门负责人没有自己改过首页时，默认首页是关键指标、待我决策、风险与动态、最新简报' }
     }
   }
 }

@@ -15,7 +15,8 @@ export const APP_TYPE = {
 export const ROLE_LABEL = {
   ADMIN: '管理员',
   DEVELOPER: '开发者',
-  MEMBER: '成员'
+  MEMBER: '成员',
+  LEADER: '部门负责人' // 不是真角色：可见范围里指担任部门负责人的人
 }
 
 // 平台运维操作（控制台下发，宿主机 yh agent 执行）

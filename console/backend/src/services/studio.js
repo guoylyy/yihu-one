@@ -50,6 +50,7 @@ export function normalizePayload(kind, p = {}, strict = false) {
     const out = {
       prompt: str(p.prompt, 8000, '提示词'),
       tools: [...new Set((Array.isArray(p.tools) ? p.tools : []).map(String).filter(Boolean))].slice(0, 60),
+      allReadOnly: !!p.allReadOnly,
       modelId: p.modelId ? Number(p.modelId) : null,
       starters: (Array.isArray(p.starters) ? p.starters : []).map(s => str(s, 100, '开场问题')).filter(Boolean).slice(0, 6),
       greeting: str(p.greeting, 500, '欢迎语')

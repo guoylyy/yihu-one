@@ -9,6 +9,7 @@
       <template v-else>
         <span class="yh-muted small">调整卡片的顺序、宽度、显示，改完点保存</span>
         <el-button size="small" @click="addDlg.visible = true">添加卡片</el-button>
+        <el-button size="small" @click="useTemplate('boss')">套用：管理层</el-button>
         <el-button size="small" @click="resetHome">恢复默认</el-button>
         <el-button size="small" @click="cancelEdit">取消</el-button>
         <el-button size="small" type="primary" :loading="saving" @click="saveEdit">保存</el-button>
@@ -131,6 +132,9 @@
             </section>
 
             <HomeDataCard v-else-if="c.type === 'data' && !editing" :card="c" />
+            <OverviewCard v-else-if="['metrics', 'decisions', 'events'].includes(c.type) && !editing" :type="c.type" :title="c.title" />
+            <BriefCard v-else-if="c.type === 'brief' && !editing" :title="c.title" />
+            <section v-else-if="['metrics', 'decisions', 'events', 'brief'].includes(c.type)" class="yh-card"><div class="yh-card-title">{{ cardLabel(c) }}</div><div class="yh-muted small">来自各应用的经营数据</div></section>
             <section v-else-if="c.type === 'data'" class="yh-card"><div class="yh-card-title">{{ c.title }}</div><div class="yh-muted small">数据卡片 · {{ c.tool }} · {{ c.view || 'auto' }}</div></section>
           </CardBoundary>
         </div>
@@ -207,6 +211,8 @@ import { Plus, Promotion, Setting, Check, ArrowRight, Link } from '@element-plus
 import AppIcon from '@/components/AppIcon.vue'
 import CardBoundary from './CardBoundary.vue'
 import HomeDataCard from './HomeDataCard.vue'
+import OverviewCard from './OverviewCard.vue'
+import BriefCard from './BriefCard.vue'
 import { meApi } from '@/api/me'
 import { adminApi } from '@/api/admin'
 import { useUserStore } from '@/stores/user'
@@ -222,9 +228,10 @@ const aiText = ref('')
 
 // 默认首页（和后端 services/home.js 的 TEMPLATE 一致）：取布局失败时用它，不白屏
 const TEMPLATE = [{ id: 'greeting', type: 'greeting' }, { id: 'setup', type: 'setup' }, { id: 'assistant', type: 'assistant' }, { id: 'apps', type: 'apps' }]
-const TYPE_LABEL = { greeting: '问候', setup: '开始配置', assistant: 'AI 助手', apps: '我的应用', app: '应用入口', link: '链接', text: '文字', data: '数据' }
+const TYPE_LABEL = { greeting: '问候', setup: '开始配置', assistant: 'AI 助手', apps: '我的应用', app: '应用入口', link: '链接', text: '文字', data: '数据', metrics: '关键指标', decisions: '待我决策', events: '风险与动态', brief: '最新简报' }
 const ADDABLE = [
   { value: 'data', label: '数据卡片（应用里的待办、指标等）' }, { value: 'app', label: '单个应用的入口' },
+  { value: 'brief', label: '最新经营简报' }, { value: 'metrics', label: '关键指标（各应用汇总）' }, { value: 'decisions', label: '待我决策（各应用汇总）' }, { value: 'events', label: '风险与动态（各应用汇总）' },
   { value: 'link', label: '链接' }, { value: 'text', label: '文字' },
   { value: 'greeting', label: '问候' }, { value: 'assistant', label: 'AI 助手' }, { value: 'apps', label: '我的应用' }, { value: 'setup', label: '开始配置（管理员）' }
 ]
@@ -317,6 +324,14 @@ async function saveEdit() {
   } finally {
     saving.value = false
   }
+}
+/** 套用模板（管理层：最新简报、关键指标、待我决策、风险与动态） */
+async function useTemplate(name) {
+  await ElMessageBox.confirm('套用「管理层」首页？现在的卡片会被替换，之后可以接着改。', '套用模板', { type: 'warning' })
+  const r = await meApi.applyHomeTemplate(name)
+  cards.value = r.cards
+  editing.value = false
+  ElMessage.success('已套用')
 }
 async function resetHome() {
   await ElMessageBox.confirm('恢复成默认首页？你加的卡片会删掉。', '恢复默认', { type: 'warning' })

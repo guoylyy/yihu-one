@@ -13,8 +13,9 @@ import { appInSpace, assertSpace, spaceBrief } from './spaces.js'
 const TYPES = new Set(['LINK', 'SSO'])
 
 const hasRule = (v) => !!v && !!(v.deptIds?.length || v.userIds?.length || v.roles?.length)
+// 角色里的 LEADER 不是真角色：指「担任部门负责人的人」（老板助理等给管理层的应用用）
 const matchRule = (v, user) =>
-  !!(v.roles?.some(r => user.roles.includes(r)) ||
+  !!(v.roles?.some(r => user.roles.includes(r) || (r === 'LEADER' && user.leaderOf?.length > 0)) ||
     v.deptIds?.some(d => user.deptIds.includes(Number(d))) ||
     v.userIds?.some(id => Number(id) === user.id))
 
