@@ -28,8 +28,8 @@ step "导出平台文件（$([ -n "$WORKTREE" ] && echo '工作区，含没提�
 if [ -n "$WORKTREE" ]; then
   # 已跟踪 + 没被忽略的新文件，去掉 export-ignore 的（和 git archive 一样）
   git ls-files -z --cached --others --exclude-standard | xargs -0 git check-attr -z export-ignore \
-    | awk 'BEGIN { RS = "\0" } { f = $0; getline; getline v; if (v != "set") print f }' \
-    | while IFS= read -r f; do [ -f "$f" ] && echo "$f"; done | tar -cf - -T - | tar -xf - -C "$STAGE" || die "导出失败"
+    | while IFS= read -r -d '' f && IFS= read -r -d '' _ && IFS= read -r -d '' v; do [ "$v" = set ] || [ ! -f "$f" ] || echo "$f"; done \
+    | tar -cf - -T - | tar -xf - -C "$STAGE" || die "导出失败"
 else
   git archive --worktree-attributes HEAD | tar -x -C "$STAGE" || die "导出失败"
 fi

@@ -91,6 +91,13 @@ cd yihu-one
 ./install.sh --test --demo        # add --cn on networks in mainland China
 ```
 
+Only have Docker (Docker Desktop on Windows / macOS, a NAS)? The platform image takes the same options:
+
+```bash
+docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v /opt/yihu-one:/opt/yihu-one \
+  ghcr.io/guoylyy/yihu-one --test --demo
+```
+
 Open http://localhost:18080. Test mode creates an `admin` account and prints its password, and the login page has a "dev login" that lets you pick any user. `--demo` also installs two demo apps (Node and Python). Add `--lan` to serve on your LAN IP. Run `./yh destroy` when you're done.
 
 ### Deploy for a company

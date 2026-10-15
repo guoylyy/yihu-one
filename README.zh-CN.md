@@ -91,6 +91,13 @@ cd yihu-one
 ./install.sh --test --demo        # 国内网络再加 --cn
 ```
 
+机器上只有 Docker（Windows / macOS 的 Docker Desktop、NAS）：用平台镜像装，参数一样（见部署手册「Docker 安装」）：
+
+```bash
+docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v /opt/yihu-one:/opt/yihu-one \
+  ghcr.io/guoylyy/yihu-one --test --demo
+```
+
 打开 http://localhost:18080。测试模式会自动建 `admin` 账号并打印密码，登录页还有「开发登录」可以直接选人。`--demo` 会同时装上两个演示应用（Node、Python）。加 `--lan` 让局域网里的电脑也能打开。用完执行 `./yh destroy` 清掉。
 
 ### 给一家公司正式部署

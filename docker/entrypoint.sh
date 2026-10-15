@@ -1,6 +1,6 @@
 #!/bin/bash
 # 平台镜像的入口（docker/Dockerfile）。子命令：
-#   install [install.sh 的参数…]   安装（默认）：第一次把平台文件放进平台目录，再执行 install.sh
+#   install [install.sh 的参数…]   安装（默认；直接跟参数也是安装）：第一次把平台文件放进平台目录，再执行 install.sh
 #   agent                          常驻 agent（yh autostart 起的 yh-agent 容器用）
 #   yh <子命令…>                   执行一条 yh 命令，如 yh destroy、yh autostart
 set -uo pipefail
@@ -23,6 +23,8 @@ if [ -z "${YH_DIR:-}" ]; then
   YH_DIR="$(echo "$mounts" | while IFS='|' read -r s d; do
     [ -n "$d" ] && [ "$d" != /var/run/docker.sock ] && same_path "$s" "$d" && echo "$d"
   done)"
+  bad="$(echo "$mounts" | awk -F'|' '$2 != "" && $2 != "/var/run/docker.sock" {print $1 " → " $2; exit}')"
+  [ -n "$YH_DIR" ] || [ -z "$bad" ] || die "平台目录在宿主机和容器里要是同一个路径（冒号两边写一样的），现在是 ${bad}：如 -v /opt/yihu-one:/opt/yihu-one"
   [ -n "$YH_DIR" ] || die "没有挂平台目录：加 -v /opt/yihu-one:/opt/yihu-one（冒号两边写同一个路径；macOS 的 Docker Desktop 用家目录下的路径，如 -v \$HOME/yihu-one:\$HOME/yihu-one），如 $EXAMPLE"
   [ "$(echo "$YH_DIR" | wc -l)" -eq 1 ] || die "挂了好几个目录，用 -e YH_DIR=<平台目录> 指明是哪个：$(echo "$YH_DIR" | tr '\n' ' ')"
 fi
@@ -36,7 +38,9 @@ export YH_DIR YH_SELF="$SELF"
 # install.sh 打印「等价的命令」、交付单里的运维命令用
 export YH_INSTALL_CMD="docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v $YH_DIR:$YH_DIR${TZ:+ -e TZ=$TZ} $IMAGE"
 
-cmd="${1:-install}"; [ $# -gt 0 ] && shift
+# 直接跟 install.sh 的参数（docker run … <镜像> --test）就是安装
+case "${1:-}" in ""|-*) set -- install "$@";; esac
+cmd="$1"; shift
 case "$cmd" in
   install)
     if [ ! -f "$YH_DIR/yh" ]; then
