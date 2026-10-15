@@ -153,3 +153,25 @@ export async function sendCard(openId, msg) {
     body: JSON.stringify({ receive_id: openId, msg_type: 'interactive', content: JSON.stringify(messageCard(msg)) })
   })
 }
+
+/** 开通向导「测试连接」：凭证对不对、通讯录权限有没有开。只读。返回 { ok, checks } */
+export async function testConnection() {
+  const c = await conf()
+  if (!c.appId || !c.appSecret) return { ok: false, checks: [{ name: '应用凭证', ok: false, message: '还没填 App ID 和 App Secret' }] }
+  tenantTok = null
+  const checks = []
+  try {
+    await tenantToken(c)
+    checks.push({ name: '应用凭证', ok: true, message: 'App ID / App Secret 正确' })
+  } catch (e) {
+    return { ok: false, checks: [{ name: '应用凭证', ok: false, message: `${e.message}：检查 App ID / App Secret` }] }
+  }
+  try {
+    await callApi(`${API()}/open-apis/contact/v3/departments/0/children?page_size=1`, { headers: { Authorization: `Bearer ${await tenantToken(c)}` } })
+    checks.push({ name: '通讯录权限', ok: true, message: '能读部门，可以从飞书同步通讯录' })
+  } catch (e) {
+    checks.push({ name: '通讯录权限', ok: false, message: `${e.message}（只影响同步通讯录，不影响登录）：开通通讯录权限，并把「数据权限 → 通讯录权限范围」设为全部成员，再发布版本` })
+  }
+  checks.push({ name: '应用发布', ok: true, message: '记得在飞书开发者后台发布版本、可用范围包含要登录的人（这一项没法自动检查）' })
+  return { ok: true, checks }
+}

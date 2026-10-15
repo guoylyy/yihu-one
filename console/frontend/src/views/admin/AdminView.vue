@@ -5,6 +5,7 @@
         <h2 class="yh-page-title">管理</h2>
         <div class="yh-page-sub">平台只做配置：应用插拔、用户与登录、模型与 AI、系统设置</div>
       </div>
+      <el-button @click="$router.push('/onboarding')">开通向导</el-button>
     </div>
     <div class="yh-card admin-card">
       <el-tabs v-model="tab" @tab-change="onTab">

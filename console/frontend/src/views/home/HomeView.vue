@@ -41,8 +41,10 @@
             <!-- 管理员：还没配完时给一张开始清单 -->
             <section v-else-if="c.type === 'setup'" class="yh-card setup-card">
               <div class="yh-card-header">
-                <div class="yh-card-title">开始配置 <span class="count">{{ setup?.done }}/{{ setup?.items.length }}</span></div>
+                <div class="yh-card-title">开始配置 <span class="count">{{ setup?.done }}/{{ setup?.total }}</span></div>
+                <span class="yh-grow" />
                 <span class="yh-muted small">只有管理员能看到</span>
+                <el-button type="primary" size="small" @click="$router.push('/onboarding')">打开开通向导</el-button>
               </div>
               <div class="setup">
                 <div v-for="it in setup?.items || []" :key="it.key" class="setup-item" :class="{ done: it.done }" @click="$router.push(it.to)">
@@ -214,7 +216,7 @@ import HomeDataCard from './HomeDataCard.vue'
 import OverviewCard from './OverviewCard.vue'
 import BriefCard from './BriefCard.vue'
 import { meApi } from '@/api/me'
-import { adminApi } from '@/api/admin'
+import { onboardingApi } from '@/api/admin'
 import { useUserStore } from '@/stores/user'
 import { useAssistantStore } from '@/stores/assistant'
 import { openApp } from '@/utils/navigate'
@@ -222,7 +224,7 @@ import { openApp } from '@/utils/navigate'
 const user = useUserStore()
 const assistant = useAssistantStore()
 const data = ref(null)
-const overview = ref(null)
+const onboarding = ref(null)
 const loading = ref(false)
 const aiText = ref('')
 
@@ -257,16 +259,22 @@ const defaultGreeting = computed(() => {
   return `${p}，${user.me?.name || ''}`
 })
 const suggestions = computed(() => (assistant.status?.enabled ? (assistant.status.suggestions || []).slice(0, 4) : []))
+// 开通向导里还没配、也没跳过的步骤（向导的步骤状态按真实配置算）
+const SETUP_TEXT = {
+  company: ['公司信息', '平台名称、公司全称、LOGO、时区'],
+  theme: ['外观', '按公司 VI 选配色和 LOGO'],
+  models: ['配置大模型', '填一个 API Key，AI 助手和每日简报就能用了'],
+  login: ['设置登录方式', '钉钉 / 飞书 / 企业微信：照着清单建应用、开权限、填凭证'],
+  people: ['把人放进来', '从钉钉 / 飞书同步通讯录，或者用表格导入'],
+  notify: ['消息通知', '简报推到手机；平台升级通知发到群里'],
+  apps: ['装上第一个应用', '一键安装官方应用，或登记已有系统']
+}
 const setup = computed(() => {
-  const o = overview.value
+  const o = onboarding.value
   if (!o) return null
-  const items = [
-    { key: 'llm', title: '配置大模型', desc: '添加一个模型，AI 助手就能用了', to: '/admin?tab=llm', done: o.models > 0 },
-    { key: 'login', title: '设置登录方式', desc: '账号密码默认开启；用钉钉、飞书或企业微信的话填好应用凭证并打开', to: '/admin?tab=login', done: o.loginConfigured },
-    { key: 'users', title: '添加用户', desc: '手动添加，或从钉钉同步通讯录', to: '/admin?tab=users', done: o.users > 1 },
-    { key: 'apps', title: '插上第一个应用', desc: '从 Git 仓库安装，或登记一个已有系统', to: '/admin?tab=apps', done: o.apps > 0 }
-  ]
-  return { items, done: items.filter(i => i.done).length, todo: items.filter(i => !i.done) }
+  const steps = o.steps.filter(s => SETUP_TEXT[s.key])
+  const items = steps.filter(s => !s.done && !s.skipped).map(s => ({ key: s.key, title: SETUP_TEXT[s.key][0], desc: SETUP_TEXT[s.key][1], to: `/onboarding?step=${s.key}`, done: false }))
+  return { items, total: steps.length, done: steps.filter(s => s.done).length, todo: items }
 })
 
 /** 这张卡片现在该不该出现：隐藏的、不适用的（不是管理员的开始配置、配完了的开始配置、没开助手）不显示；编辑时都显示 */
@@ -357,11 +365,11 @@ async function load() {
   try {
     const [wb, ov, h] = await Promise.all([
       meApi.workbench(),
-      user.permissions.admin ? adminApi.overview().catch(() => null) : null,
+      user.permissions.admin ? onboardingApi.status().catch(() => null) : null,
       meApi.home().catch(e => { homeError.value = e.message || '出错了'; return null })
     ])
     data.value = wb
-    overview.value = ov
+    onboarding.value = ov
     if (h?.cards?.length) { cards.value = h.cards; catalog.value = h.catalog || {} }
   } finally {
     loading.value = false

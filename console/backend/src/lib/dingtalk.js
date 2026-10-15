@@ -163,3 +163,29 @@ export async function listDeptUsers(deptId) {
   }
   return out
 }
+
+/**
+ * 开通向导「测试连接」：凭证对不对、通讯录权限有没有开、CorpId / AgentId 填没填。只读，不改任何东西
+ * 返回 { ok, checks: [{ name, ok, message }] }（ok = 凭证能用，登录就能用）
+ */
+export async function testConnection() {
+  const c = await conf()
+  if (!c.clientId || !c.clientSecret) return { ok: false, checks: [{ name: '应用凭证', ok: false, message: '还没填 Client ID 和 Client Secret' }] }
+  cachedToken = null
+  const checks = []
+  try {
+    await appAccessToken()
+    checks.push({ name: '应用凭证', ok: true, message: 'Client ID / Client Secret 正确' })
+  } catch (e) {
+    return { ok: false, checks: [{ name: '应用凭证', ok: false, message: `${e.message}：检查 Client ID / Client Secret 是不是同一个应用的` }] }
+  }
+  try {
+    await topapi('/topapi/v2/department/listsub', { dept_id: 1 })
+    checks.push({ name: '通讯录权限', ok: true, message: '能读部门，可以从钉钉同步通讯录' })
+  } catch (e) {
+    checks.push({ name: '通讯录权限', ok: false, message: `${e.message}（只影响同步通讯录，不影响登录）：开通「通讯录部门信息读权限」「通讯录部门成员读权限」` })
+  }
+  checks.push(c.corpId ? { name: 'CorpId', ok: true, message: '已填' } : { name: 'CorpId', ok: false, message: '没填：在钉钉客户端里打开平台时的免登要用' })
+  checks.push(c.agentId ? { name: 'AgentId', ok: true, message: '已填，可以发工作通知（简报推送）' } : { name: 'AgentId', ok: false, message: '没填：给个人推送简报、消息要用（不影响登录）' })
+  return { ok: true, checks }
+}

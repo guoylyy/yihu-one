@@ -77,7 +77,7 @@ const convTitle = ref('')
 // /assistant 页自己就是全屏助手，不显示抽屉
 // 无助手权限（功能关闭或管理员限制）时整块不渲染
 // 助手页、编辑器、轻应用这类占满全屏的页面不显示悬浮按钮（会挡住页面自己的输入框）
-const visible = computed(() => !['Assistant', 'StudioApp', 'Lite'].includes(route.name) && user.permissions.assistant !== false)
+const visible = computed(() => !['Assistant', 'StudioApp', 'Lite', 'Onboarding'].includes(route.name) && user.permissions.assistant !== false)
 
 const subTitle = computed(() => {
   const s = assistant.status

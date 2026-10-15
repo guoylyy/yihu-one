@@ -55,6 +55,7 @@ const routes = [
       { path: 'studio/:id(\\d+)', name: 'StudioApp', component: () => import('@/views/studio/StudioApp.vue'), meta: { title: '编辑应用', nav: 'studio', fullHeight: true } },
       { path: 'lite/:id(\\d+)', name: 'Lite', component: () => import('@/views/lite/LiteRunner.vue'), meta: { title: '轻应用', nav: 'market', fullHeight: true } },
       { path: 'assistant', name: 'Assistant', component: () => import('@/views/assistant/AssistantView.vue'), meta: { title: 'AI 助手', nav: 'assistant', fullHeight: true, permission: 'assistant' } },
+      { path: 'onboarding', name: 'Onboarding', component: () => import('@/views/onboarding/OnboardingView.vue'), meta: { title: '开通向导', nav: 'admin', permission: 'admin' } },
       { path: 'admin', name: 'Admin', component: () => import('@/views/admin/AdminView.vue'), meta: { title: '管理', nav: 'admin', permission: 'admin' } },
       { path: 'me', name: 'Me', component: () => import('@/views/me/MeView.vue'), meta: { title: '个人中心', nav: 'me' } },
       { path: ':pathMatch(.*)*', name: 'NotFound', component: () => import('@/views/NotFound.vue'), meta: { title: '页面不存在' } }

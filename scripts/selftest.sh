@@ -432,6 +432,22 @@ HINT="简报应跑完、存成对话；没配消息渠道时注明没推送：$(
 HINT="定时任务里给模型的工具不应有写操作"; check "定时任务：只给只读工具" sh -c "docker logs yhst-llm 2>/dev/null | tail -n +$((LLM_LINES + 1)) | grep '\"tools\"' | head -1 | jq -e '(.tools | length) > 0 and (.tools | index(\"set_my_home\") == null) and (.tools | index(\"create_daily_brief\") == null) and (.tools | index(\"publish_app\") == null) and (.tools | index(\"get_business_overview\") != null)'"
 HINT="每人的定时任务数有上限、频率要合法"; check "定时任务：校验" sh -c "curl -s -X POST $B/api/me/scheduled-tasks -H 'Authorization: Bearer $T_ZS' -H '$J' -d '{\"name\":\"x\",\"prompt\":\"y\",\"schedule\":{\"kind\":\"hourly\",\"time\":\"08:00\"}}' | jq -e '.code != 0'"
 
+title "16. 开通向导：步骤状态按真实配置算、跳过、表格导入人员、只给管理员"
+OB="$(api GET /api/admin/onboarding)"
+HINT="9 步；前面已经配了模型、装了应用，这两步应已完成：$(printf '%s' "$OB" | jq -c '[.data.steps[]|"\(.key):\(.done)"]')"; check "开通向导：步骤状态" sh -c "printf '%s' '$OB' | jq -e '(.data.steps | length) == 9 and (.data.steps[] | select(.key==\"account\") | .done) and (.data.steps[] | select(.key==\"models\") | .done) and (.data.steps[] | select(.key==\"apps\") | .done) and (.data.facts.callbacks.dingtalk | endswith(\"/auth/dingtalk/callback\"))'"
+OB_SKIP="$(api POST /api/admin/onboarding/skip -d '{"step":"theme"}')"; OB_SKIP2="$(api POST /api/admin/onboarding/skip -d '{"step":"company"}')"
+HINT="跳过后应不在待办里；公司信息不能跳过：$(printf '%s' "$OB_SKIP2" | head -c 120)"; check "开通向导：跳过一步" sh -c "printf '%s' '$OB_SKIP' | jq -e '(.data.todo | index(\"theme\")) == null and (.data.steps[] | select(.key==\"theme\") | .skipped)' && printf '%s' '$OB_SKIP2' | grep -q '不能跳过'"
+OB_TBL='[["姓名","账号","手机号","部门","部门负责人"],["自测·周七","zhouqi","13712340001","自测事业部/一组","是"],["自测·赵六","","13712340002","自测事业部/二组",""],["","","","",""],["自测·坏账号","1bad","","",""]]'
+OB_PRE="$(api POST /api/admin/onboarding/import-people -d "{\"table\":$OB_TBL,\"dryRun\":true}")"
+HINT="预览：2 人新增、1 行有问题：$(printf '%s' "$OB_PRE" | jq -c .data.summary)"; check "开通向导：表格导入预览" sh -c "printf '%s' '$OB_PRE' | jq -e '.data.summary.new == 2 and (.data.summary.errors | length) == 1 and .data.summary.depts == 2'"
+api POST /api/admin/onboarding/import-people -d "{\"table\":$OB_TBL,\"dryRun\":false,\"password\":\"abc12345\"}" > /dev/null
+OB_LEAD="$(api GET /api/org/departments | jq -r '[.. | objects | select(.name? == "一组")][0].leaders | length')"
+HINT="周七能用初始密码登录、一组负责人是他、再导入一次都算已存在；负责人数：$OB_LEAD"; check "开通向导：表格导入人员" sh -c "[ \"\$(curl -s -X POST $B/api/auth/password -H '$J' -d '{\"username\":\"zhouqi\",\"password\":\"abc12345\"}' | jq -r '.data.token // empty' | wc -c)\" -gt 50 ] && [ '$OB_LEAD' = 1 ] && curl -s -X POST $B/api/admin/onboarding/import-people -H 'Authorization: Bearer $T' -H '$J' -d '{\"table\":$OB_TBL,\"dryRun\":true}' | jq -e '.data.summary.new == 0 and .data.summary.exists == 2'"
+HINT="没填凭证时应逐项说明，不报 500"; check "开通向导：登录方式测试连接" sh -c "curl -s -X POST $B/api/admin/onboarding/test-login -H 'Authorization: Bearer $T' -H '$J' -d '{\"provider\":\"dingtalk\"}' | jq -e '.data.ok == false and (.data.checks[0].message | test(\"Client ID\"))'"
+HINT="官方应用清单里应有 FDE"; check "开通向导：官方应用清单" sh -c "curl -s $B/api/admin/onboarding/official-apps -H 'Authorization: Bearer $T' | jq -e '(.data.apps[] | select(.code==\"fde\") | .git | test(\"yihu-fde\")) and .data.boss.id != null'"
+HINT="普通成员应 403"; check "开通向导：只有管理员能用" sh -c "curl -s $B/api/admin/onboarding -H 'Authorization: Bearer $T_ZS' | grep -q '\"code\":1003'"
+HINT="完成后应记下时间"; check "开通向导：完成开通" sh -c "curl -s -X POST $B/api/admin/onboarding/complete -H 'Authorization: Bearer $T' | jq -e '.data.completedAt != null and (.data.steps[] | select(.key==\"finish\") | .done)'"
+
 # ---- 结果 ----
 printf '\n━━━━━━━━ 结果：%s 项通过，%s 项失败 ━━━━━━━━' "$pass" "$fail"
 printf "$results\n"

@@ -48,3 +48,15 @@ export const platformApi = {
   }),
   removePackage: id => del(`/admin/platform/packages/${id}`)
 }
+
+// 开通向导：各步骤的状态按真实配置算；配置本身还是走各自的接口（settingsApi、llm-configs、org）
+export const onboardingApi = {
+  status: () => get('/admin/onboarding'),
+  skip: (step, skipped = true) => post('/admin/onboarding/skip', { step, skipped }),
+  complete: () => post('/admin/onboarding/complete'),
+  testLogin: provider => post('/admin/onboarding/test-login', { provider }, { timeout: 30000 }),
+  messageMe: () => post('/admin/onboarding/message-me', null, { timeout: 30000 }),
+  officialApps: () => get('/admin/onboarding/official-apps'),
+  installOfficial: code => post(`/admin/onboarding/official-apps/${code}/install`),
+  importPeople: data => post('/admin/onboarding/import-people', data, { timeout: 180000 })
+}

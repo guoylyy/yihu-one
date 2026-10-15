@@ -14,6 +14,7 @@ import * as settings from '../services/settings.js'
 import * as notifySvc from '../services/notify.js'
 import { sealKey, openKey, complete, embed } from '../agent/llm.js'
 import * as spaces from '../services/spaces.js'
+import * as onboarding from '../services/onboarding.js'
 
 const router = express.Router()
 router.use((req, res, next) => { try { assertAdmin(req.ctx); next() } catch (e) { next(e) } })
@@ -33,6 +34,16 @@ router.delete('/apps/:id', wrap(req => apps.adminDelete(req.ctx, req.params.id))
 router.get('/usage', wrap(req => usage.overview(req.ctx, req.query)))
 // 系统设置「发布通知」里的测试按钮
 router.post('/notify/test', wrap(req => notifySvc.sendTest(req.ctx)))
+
+// ---------- 开通向导 ----------
+router.get('/onboarding', wrap(req => onboarding.status(req.ctx)))
+router.post('/onboarding/skip', wrap(req => onboarding.skip(req.ctx, req.body?.step, req.body?.skipped !== false)))
+router.post('/onboarding/complete', wrap(req => onboarding.complete(req.ctx)))
+router.post('/onboarding/test-login', wrap(req => onboarding.testLogin(req.ctx, req.body?.provider)))
+router.post('/onboarding/message-me', wrap(req => onboarding.messageMe(req.ctx)))
+router.get('/onboarding/official-apps', wrap(req => onboarding.officialApps(req.ctx)))
+router.post('/onboarding/official-apps/:code/install', wrap(req => onboarding.installOfficial(req.ctx, req.params.code)))
+router.post('/onboarding/import-people', wrap(req => onboarding.importPeople(req.ctx, req.body || {})))
 
 // ---------- 平台运维(由宿主机 yh agent 执行) ----------
 router.get('/platform', wrap(req => platform.overview(req.ctx)))

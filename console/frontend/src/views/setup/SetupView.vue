@@ -8,7 +8,7 @@
         <ul class="side-points">
           <li><span>✓</span> 应用随时插拔，统一登录</li>
           <li><span>✓</span> AI 助手自动获得每个应用的能力</li>
-          <li><span>✦</span> 之后可在「管理 → 登录方式」接入钉钉 / 飞书 / 企业微信</li>
+          <li><span>✦</span> 登录后开通向导带你配好外观、模型、登录方式、人员和应用</li>
         </ul>
       </div>
     </div>
@@ -51,7 +51,7 @@
             :closable="false"
             show-icon
             title="马上就好"
-            description="点击「完成初始化」将创建管理员账号，并预置一个通用 AI 助手。之后可在「管理 → 登录方式」里配置钉钉 / 飞书 / 企业微信登录。"
+            description="点击「完成初始化」将创建管理员账号，并预置通用 AI 助手和老板助理。用这个账号登录后进入开通向导，接着配公司信息、外观、大模型、登录方式、人员和应用。"
           />
         </div>
 
@@ -122,7 +122,7 @@ async function submit() {
     })
     app.needsSetup = false
     ElMessage.success('初始化完成，请登录')
-    router.replace({ name: 'Login' })
+    router.replace({ name: 'Login', query: { redirect: '/onboarding' } })
   } catch {
     /* axios 已提示 */
   } finally {

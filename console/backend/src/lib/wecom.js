@@ -96,3 +96,23 @@ export async function sendAppMessage(userIds, msg) {
   const d = await r.json().catch(() => ({}))
   if (d.errcode !== 0) throw new AppError(502, `企业微信发消息失败：${d.errmsg || d.errcode}`, 5001)
 }
+
+/** 开通向导「测试连接」：凭证对不对、企业可信 IP 配没配。只读。返回 { ok, checks } */
+export async function testConnection() {
+  const c = await conf()
+  if (!c.corpId || !c.agentId || !c.secret) return { ok: false, checks: [{ name: '应用凭证', ok: false, message: '还没填 CorpID、AgentId 和 Secret' }] }
+  cached = null
+  const checks = []
+  let token
+  try {
+    token = await accessToken(c)
+    checks.push({ name: '应用凭证', ok: true, message: 'CorpID / Secret 正确' })
+  } catch (e) {
+    return { ok: false, checks: [{ name: '应用凭证', ok: false, message: `${e.message}：检查 CorpID 和这个应用的 Secret` }] }
+  }
+  const a = await call(`/cgi-bin/agent/get?access_token=${token}&agentid=${encodeURIComponent(c.agentId)}`)
+  if (a.errcode === 0) checks.push({ name: '应用与可信 IP', ok: true, message: `应用「${a.name || c.agentId}」可用，平台的出口 IP 在可信 IP 里` })
+  else if (a.errcode === 60020) checks.push({ name: '企业可信 IP', ok: false, message: `平台的出口 IP 不在「企业可信 IP」里：到应用详情 → 开发者接口 → 企业可信 IP 加上（${a.errmsg || ''}）` })
+  else checks.push({ name: 'AgentId', ok: false, message: `${a.errmsg || a.errcode}：检查 AgentId 是不是这个应用的` })
+  return { ok: checks.every(x => x.ok), checks }
+}
