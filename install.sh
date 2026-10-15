@@ -14,6 +14,9 @@
 #     ./install.sh --company acme --url https://one.example.com --apps-url https://apps.one.example.com \
 #                  --frp-server 1.2.3.4 --cn --demo
 #
+#   只有 Docker 的机器（Windows / macOS 的 Docker Desktop、NAS）：用平台镜像装，参数一样（见 docs/部署手册.md「Docker 安装」）：
+#     docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v /opt/yihu-one:/opt/yihu-one ghcr.io/guoylyy/yihu-one [参数…]
+#
 #   没有代码时一条命令安装（从发布页下载最新更新包）：
 #     curl -fsSL https://github.com/guoylyy/yihu-one/releases/latest/download/install.sh | bash -s -- --company acme --url https://...
 #
@@ -67,6 +70,10 @@ WARNINGS=0
 MODE="production"; LAN=""; COMPANY=""; URL=""; APPS_URL=""; FRP=""; CN=""; DEMO=""; NO_OPENHEX=""
 DEST=""; SRC=""; UPGRADE_URL="$DEFAULT_LATEST"; GIT=""; AUTOSTART="1"; YES=""; ALLOW_UNSIGNED=""
 INTRANET=""; LAN_IP=""; PORT=""
+# Docker 安装（docker/entrypoint.sh 调用）：平台目录是挂进来的 YH_DIR；常驻 agent 是容器；本机 IP、端口占用在容器里看不到
+DOCKER="${YH_DOCKER:-}"
+ME="${YH_INSTALL_CMD:-./install.sh}"                          # 「等价的命令」的开头
+if [ -n "$DOCKER" ]; then YH="docker exec -it yh-agent yh"; YH_ONCE="$ME yh"; else YH="./yh"; YH_ONCE="./yh"; fi
 ARGC=$#
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -90,7 +97,7 @@ while [ $# -gt 0 ]; do
     --no-autostart) AUTOSTART=""; shift;;
     --yes|-y) YES="1"; shift;;
     --allow-unsigned) ALLOW_UNSIGNED="1"; shift;;
-    -h|--help) sed -n '2,42p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,45p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0;;
     *) err "未知参数 $1（./install.sh --help 看用法）";;
   esac
 done
@@ -140,7 +147,9 @@ if [ "$ARGC" -eq 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
       "有域名，公司自己的网关 / 反向代理转到这台机器")"
     if [ "$how" = 1 ]; then
       INTRANET="1"
-      LAN_IP="$(ask "这台机器的内网 IP" "$(lan_ip)")"
+      if [ -n "$DOCKER" ]; then
+        while [ -z "$LAN_IP" ]; do LAN_IP="$(ask "这台机器的内网 IP（Docker 里看不到，要自己填，如 192.168.1.20）" "")"; done
+      else LAN_IP="$(ask "这台机器的内网 IP" "$(lan_ip)")"; fi
       PORT="$(ask "端口" "80")"
     else
       while :; do
@@ -158,7 +167,7 @@ if [ "$ARGC" -eq 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
     yesno "国内网络？（Docker 镜像、npm 走国内镜像）" "$def_cn" && CN="1"
     yesno "装两个演示应用？（体验统一登录、AI 工具用，以后可以删）" "n" && DEMO="1"
   fi
-  cmd="./install.sh"
+  cmd="$ME"
   if [ "$MODE" = "test" ]; then cmd="$cmd --test"
   else
     cmd="$cmd --company $COMPANY"
@@ -174,7 +183,8 @@ if [ "$MODE" = "production" ] && [ -n "$INTRANET" ]; then
   [ -z "$FRP" ] || err "--intranet 是只在内网用，不能和 --frp-server 一起用"
   [ -z "$PORT" ] || echo "$PORT" | grep -qE '^[0-9]{1,5}$' && [ "${PORT:-80}" -ge 1 ] && [ "${PORT:-80}" -le 65535 ] || err "--port 要写 1~65535 的端口：$PORT"
   if [ -z "$URL" ]; then
-    [ -n "$LAN_IP" ] || LAN_IP="$(lan_ip)"
+    [ -n "$LAN_IP" ] || [ -n "$DOCKER" ] || LAN_IP="$(lan_ip)"
+    [ -n "$LAN_IP" ] || [ -z "$DOCKER" ] || err "Docker 里取不到宿主机的内网 IP：用 --ip <宿主机内网 IP> 指定"
     [ -n "$LAN_IP" ] || err "取不到这台机器的内网 IP，用 --ip 指定"
     echo "$LAN_IP" | grep -qE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || err "--ip 要写 IPv4 地址：$LAN_IP"
     PORT="${PORT:-80}"
@@ -198,13 +208,18 @@ if [ "$MODE" = "production" ]; then
   [ -z "$FRP" ] || echo "$FRP" | grep -qE '^[A-Za-z0-9.-]+$' || err "--frp-server 写云服务器的公网 IP 或域名：$FRP"
 fi
 host_of() { echo "$1" | sed -E 's#^[a-z]+://##; s#[:/].*$##'; }
+[ -z "$DOCKER" ] || [ -z "$LAN" ] || err "Docker 安装取不到宿主机的内网 IP，--test --lan 用不了：局域网要用的话正式安装 --company … --intranet --ip <宿主机内网 IP>"
+[ -z "$DOCKER" ] || [ -z "$GIT" ] || err "Docker 安装不能用 --git（平台文件来自镜像）"
 
 SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "")"
 IN_CHECKOUT=""
 [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/yh" ] && IN_CHECKOUT="1"
 
-# 装到哪：试用和 --git 原地装；正式安装默认 ~/yihu-one
-if [ -z "$DEST" ]; then
+# 装到哪：试用和 --git 原地装；正式安装默认 ~/yihu-one；Docker 安装是挂进来的平台目录
+if [ -n "$DOCKER" ]; then
+  [ -z "$DEST" ] || [ "${DEST%/}" = "$YH_DIR" ] || err "Docker 安装的目录就是挂进来的 $YH_DIR，不用 --dir：换目录就改 -v 的路径"
+  DEST="$YH_DIR"
+elif [ -z "$DEST" ]; then
   if [ -n "$IN_CHECKOUT" ] && { [ "$MODE" = "test" ] || [ -n "$GIT" ]; }; then DEST="$SELF_DIR"
   elif [ -n "$IN_CHECKOUT" ] && [ ! -d "$SELF_DIR/.git" ]; then DEST="$SELF_DIR" # 已经是解压出来的更新包
   else DEST="$HOME/yihu-one"; fi
@@ -217,7 +232,8 @@ fi
 
 # ---------------------------------------------------------------- 1. 检查这台机器
 info "1/7 检查这台机器"
-case "$(uname -s)" in
+case "$([ -n "$DOCKER" ] && echo Docker || uname -s)" in
+  Docker) OS="Docker"; docker_how="挂上宿主机的 docker.sock"; pkg="（镜像里应该都有，换个版本的镜像试试）";;
   Darwin) OS="macOS"; docker_how="brew install colima docker docker-compose && colima start --cpu 4 --memory 8 --disk 100"; pkg="brew install";;
   Linux)  OS="Linux"; docker_how="curl -fsSL https://get.docker.com | sh（国内加 -s -- --mirror Aliyun）"; pkg="apt install -y（或 yum install -y）";;
   *) err "不支持的系统（仅支持 macOS / Linux）";;
@@ -226,7 +242,8 @@ for c in curl git jq openssl rsync tar; do command -v "$c" >/dev/null 2>&1 || er
 command -v docker >/dev/null 2>&1 || err "缺少 Docker：$docker_how"
 docker info >/dev/null 2>&1 || err "Docker 没在运行（macOS：colima start；Linux：sudo systemctl start docker；当前用户没权限时：sudo usermod -aG docker \$USER 后重新登录）"
 docker compose version >/dev/null 2>&1 || err "缺少 docker compose 插件（Linux：apt install docker-compose-plugin）"
-ok "$OS，依赖齐全"
+if [ -n "$DOCKER" ]; then ok "Docker 安装（宿主机 $(docker info --format '{{.OperatingSystem}}' 2>/dev/null)），平台目录 $DEST"
+else ok "$OS，依赖齐全"; fi
 
 # Docker 能用的 CPU / 内存（macOS 上是 Colima 虚拟机的，不是整机的）
 ncpu="$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)"
@@ -245,7 +262,7 @@ else ok "磁盘剩 ${free_gb}G"; fi
 
 # 一台机器只跑一套平台（容器名 yh-*、开机自启的服务名都是固定的）
 if [ ! -f "$DEST/yh.env" ] && docker ps -a --format '{{.Names}}' | grep -qE '^yh-(console|caddy|mysql)$'; then
-  err "这台机器上已经有一套以虎 One 在跑（docker ps 能看到 yh-console 等容器），一台机器只能装一套。要重装先在原目录执行 ./yh destroy"
+  err "这台机器上已经有一套以虎 One 在跑（docker ps 能看到 yh-console 等容器），一台机器只能装一套。要重装先在原目录执行 $YH_ONCE destroy"
 fi
 
 # 网络：拉镜像、装 npm 包
@@ -266,6 +283,7 @@ port_busy() { # 有别的程序（不是我们自己的 Caddy）在监听这个�
 }
 if [ "$MODE" = "production" ] && [ -n "$INTRANET" ]; then
   if docker ps --format '{{.Names}}' | grep -q '^yh-caddy$'; then :
+  elif [ -n "$DOCKER" ]; then ok "端口 $PORT（Docker 里看不到宿主机的端口占用：被占了的话启动时会报错，换 --port）"
   elif port_busy "$PORT"; then err "端口 $PORT 已经被别的程序占用，换一个：--port 8080"
   else ok "端口 $PORT 空闲"; fi
   if [ "$OS" = "Linux" ]; then
@@ -288,13 +306,14 @@ fi
 echo
 echo "  安装到：$DEST"
 if [ "$MODE" = "test" ]; then
-  echo "  方式：  本机试用（测试模式：http、开发登录、不连隧道、不发通知）"
+  echo "  方式：  本机试用（测试模式：http、开发登录、不连隧道、不发通知）$([ -n "$DOCKER" ] && echo '，Docker 安装')"
 else
   echo "  公司：  $COMPANY"
   echo "  控制台：$URL"
   echo "  应用：  ${APPS_URL:-（和控制台同一个域名）}"
   if [ -n "$INTRANET" ]; then echo "  入口：  只在内网用，本机监听 0.0.0.0:$PORT（不对外、不配隧道；钉钉 / 飞书 / 企业微信登录用不了，用账号密码）"
   else echo "  入口：  $([ -n "$FRP" ] && echo "经云服务器 $FRP 的隧道" || echo "自己在前面配反向代理到本机 127.0.0.1:18080")"; fi
+  [ -z "$DOCKER" ] || echo "  方式：  Docker 安装（常驻 agent 是容器 yh-agent）"
   if [ -n "$GIT" ]; then up="Git 原地安装，自动跟踪 release 分支"
   elif [ -n "$UPGRADE_URL" ]; then up="更新包方式，从 $UPGRADE_URL 查新版本"
   else up="更新包方式，不联网查，拷更新包升级"; fi
@@ -384,6 +403,11 @@ if [ -n "$CN" ]; then
   setkv CONSOLE_IMAGE_REPO "ghcr.m.daocloud.io/guoylyy/yihu-one-console"
 fi
 [ -n "$NO_OPENHEX" ] && setkv CONSOLE_OMIT_OPTIONAL 1
+# Docker 安装：容器默认是 UTC，时区写进 yh.env（日志时间、每晚 02:30 备份按它）。docker run 带 -e TZ=… 时用它，国内网络默认上海
+if [ -n "$DOCKER" ]; then
+  tz="${TZ:-}"; [ -n "$tz" ] || [ -z "$CN" ] || tz="Asia/Shanghai"
+  [ -n "$tz" ] && setkv TZ "$tz"
+fi
 if [ "$MODE" = "production" ]; then
   setkv APPS_URL "$APPS_URL"
   [ -n "$FRP" ] && setkv FRP_SERVER_ADDR "$FRP"
@@ -405,10 +429,13 @@ envv() { grep -E "^$1=" yh.env | tail -1 | cut -d= -f2-; }
 # ---------------------------------------------------------------- 5. 开机自启 + 常驻 agent
 info "5/7 开机自启、常驻 agent、每晚备份"
 AUTO_OK=""
-if [ "$MODE" = "test" ]; then
+if [ -n "$DOCKER" ] && [ -n "$AUTOSTART" ]; then
+  # Docker 安装：试用也装上（agent 容器随 yh destroy 一起删掉，不留系统服务）
+  ./yh autostart && AUTO_OK=1 || warn "常驻 agent 容器没起来，之后执行 $YH_ONCE autostart"
+elif [ "$MODE" = "test" ]; then
   ok "测试模式跳过（试用时用不到；控制台里点「安装应用」要 agent：另开终端执行 ./yh agent）"
 elif [ -z "$AUTOSTART" ]; then
-  warn "按 --no-autostart 跳过：控制台里的安装 / 发布 / 停用操作会一直排队，之后执行 ./yh autostart"
+  warn "按 --no-autostart 跳过：控制台里的安装 / 发布 / 停用操作会一直排队，之后执行 $YH_ONCE autostart"
 elif [ "$OS" = "macOS" ]; then
   ./yh autostart && AUTO_OK=1 || warn "开机自启没装上，之后手动执行 ./yh autostart"
 elif [ "$(id -u)" = "0" ]; then
@@ -430,7 +457,7 @@ if [ -n "$DEMO" ]; then
     else warn "$name 没装上，日志 backups/install-$code.log"; fi
   done
 else
-  ok "跳过（想要的话：./yh new demo-node --from node --name 演示 && ./yh up demo-node）"
+  ok "跳过（想要的话：$YH new demo-node --from node --name 演示 && $YH up demo-node）"
 fi
 
 # ---------------------------------------------------------------- 7. 自检 + 交付单
@@ -452,20 +479,20 @@ if [ "$MODE" = "production" ]; then
 | --- | --- |
 | 公司 | $COMPANY |
 | 版本 | $VERSION（$CHANNEL） |
-| 平台机器 | $(hostname)（$OS），目录 \`$DEST\` |
+| 平台机器 | $([ -n "$DOCKER" ] && echo "Docker 宿主机（$(docker info --format '{{.Name}}' 2>/dev/null)），平台目录 \`$DEST\`（宿主机上同一路径），镜像 \`${YH_INSTALL_CMD##* }\`" || echo "$(hostname)（$OS），目录 \`$DEST\`") |
 | 控制台 | $URL |
 | 应用域名 | ${APPS_URL:-未配置（生产建议配：yh.env 的 APPS_URL）} |
 | 对外入口 | $(if [ -n "$INTRANET" ]; then echo "只在内网用：本机 0.0.0.0:$PORT"; elif [ -n "$FRP" ]; then echo "云服务器 $FRP（frp 隧道）"; else echo "前置反向代理 → 本机 127.0.0.1:18080"; fi) |
-| 升级方式 | $([ -d .git ] && echo "Git 原地，自动跟踪 \`$(envv PLATFORM_BRANCH)\` 分支" || echo "更新包：控制台「管理 → 概览」点升级，或 \`./yh upgrade\` / \`./yh upgrade --package <包>\`") |
-| 开机自启 / agent | $([ -n "$AUTO_OK" ] && echo 已安装 || echo "**未安装**：执行 \`$([ "$OS" = Linux ] && echo 'sudo ')./yh autostart\`") |
+| 升级方式 | $([ -d .git ] && echo "Git 原地，自动跟踪 \`$(envv PLATFORM_BRANCH)\` 分支" || echo "更新包：控制台「管理 → 概览」点升级，或 \`$YH upgrade\` / \`$YH upgrade --package <包>\`") |
+| 开机自启 / agent | $([ -n "$AUTO_OK" ] && { [ -n "$DOCKER" ] && echo "已安装（容器 yh-agent）" || echo 已安装; } || echo "**未安装**：执行 \`$([ "$OS" = Linux ] && echo 'sudo ')$YH_ONCE autostart\`") |
 
 ## 部署检查清单
 
 $(if [ -n "$INTRANET" ]; then echo "- [ ] 内网另一台电脑打开 $URL 能看到登录页（打不开：防火墙放行端口 $PORT）"; else echo "- [ ] DNS：\`$(host_of "$URL")\`${APPS_URL:+、\`$(host_of "$APPS_URL")\`} 解析到 $([ -n "$FRP" ] && echo "云服务器 $FRP" || echo "前置反代")"; fi)
-$([ -n "$FRP" ] && printf '%s\n' "- [ ] 云服务器：安全组放行 TCP 7000、80、443；把本目录的 \`cloud/\` 拷过去执行 \`$CLOUD_CMD\`" "- [ ] 隧道：平台机器上 \`./yh doctor\` 的「隧道已连上云端」「公网访问」都通过")
+$([ -n "$FRP" ] && printf '%s\n' "- [ ] 云服务器：安全组放行 TCP 7000、80、443；把本目录的 \`cloud/\` 拷过去执行 \`$CLOUD_CMD\`" "- [ ] 隧道：平台机器上 \`$YH doctor\` 的「隧道已连上云端」「公网访问」都通过")
 - [ ] 打开 $URL 完成初始化（管理员账号、平台名称），登录后跟着**开通向导**走完：公司信息、外观、大模型（测试通过）、登录方式（测试连接通过）、人员、消息通知（「发一条给我」收到）、应用
 - [ ] 开通向导最后一步「下载开通报告」，和本交付单一起留档
-- [ ] 备份：yh.env 的 \`BACKUP_REMOTE\` 配异地备份；\`./yh backup\` 跑一次，确认 \`backups/\` 下有文件
+- [ ] 备份：yh.env 的 \`BACKUP_REMOTE\` 配异地备份；\`$YH backup\` 跑一次，确认 \`backups/\` 下有文件
 - [ ] 按部署手册第 7 节验收；带客户体验一遍（第 8 节）：登录 → 工作台 → 演示应用统一登录 → AI 助手调用应用工具
 - [ ] 把 \`yh.env\` 备份到公司的密码库（丢了数据库里加密保存的密钥就解不开）
 
@@ -473,7 +500,7 @@ $([ -n "$FRP" ] && printf '%s\n' "- [ ] 云服务器：安全组放行 TCP 7000�
 
 - 控制台地址、初始化时设置的管理员账号（密码由客户自己改）
 - 平台机器位置、登录方式；目录 \`$DEST\`；**不要在这个目录里手改文件**（升级会覆盖）
-- 日常：\`./yh status\` 看状态、\`./yh doctor\` 自检、\`./yh logs console\` 看日志；忘了管理员密码 \`./yh passwd admin\`
+- 日常：\`$YH status\` 看状态、\`$YH doctor\` 自检、\`$YH logs console\` 看日志；忘了管理员密码 \`$YH passwd admin\`
 - 升级：控制台「管理 → 概览」有新版本时点「升级」（先自动备份，失败自动回滚）
 - 文档：$URL/dev（开发中心，应用怎么接入）、部署手册 \`docs/部署手册.md\`
 SHEET
@@ -485,7 +512,7 @@ printf '\033[32m✅ 以虎 One %s 装好了%s\033[0m\n' "$VERSION" "$([ "$MODE" 
 echo "   控制台：$PUBLIC_URL"
 if [ "$MODE" = "test" ]; then
   echo "   管理员：admin / $(envv ADMIN_INITIAL_PASSWORD)（登录页还有「开发登录」，可以直接选人）"
-  echo "   接下来照 README「装好后体验」走一遍；用完 ./yh destroy 清掉"
+  echo "   接下来照 README「装好后体验」走一遍；用完 $YH_ONCE destroy 清掉"
 else
   [ "$WARNINGS" -gt 0 ] && printf '\033[33m   上面有 %s 条提醒，交付前处理掉\033[0m\n' "$WARNINGS"
   if [ -n "$INTRANET" ]; then
@@ -498,4 +525,5 @@ else
   fi
   printf '\033[36m   打开 %s 继续开通\033[0m：浏览器里设管理员账号，然后开通向导一步步配外观、模型、登录方式、人员、应用\n' "$URL"
   echo "   交付单（逐项打勾）：$DEST/$SHEET"
+  [ -z "$DOCKER" ] || echo "   运维命令都在 agent 容器里执行：$YH status、$YH doctor、$YH logs console"
 fi

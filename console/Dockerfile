@@ -17,9 +17,11 @@ ARG NPM_REGISTRY=
 ARG PRISMA_ENGINES_MIRROR=
 WORKDIR /app/backend
 COPY backend/package*.json ./
-# 要对外分发镜像时加 --build-arg OMIT_OPTIONAL=1：不装可选依赖（OpenHex SDK 的协议还没定，不能再分发）
+# 要对外分发镜像时加 --build-arg OMIT_OPTIONAL=1：去掉 OpenHex SDK（协议还没定，不能再分发；runner.js 里是可选加载）。
+# 只删它这一个包，不能用 npm ci --omit=optional：那样会连 pdfjs-dist 要的 @napi-rs/canvas 一起去掉，控制台启动就崩
 ARG OMIT_OPTIONAL=
-RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi && npm ci --omit=dev $([ -n "$OMIT_OPTIONAL" ] && echo --omit=optional) --no-audit --no-fund
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi && npm ci --omit=dev --no-audit --no-fund \
+  && if [ -n "$OMIT_OPTIONAL" ]; then rm -rf node_modules/@openhex-ai; fi
 COPY backend/prisma ./prisma
 RUN if [ -n "$PRISMA_ENGINES_MIRROR" ]; then export PRISMA_ENGINES_MIRROR; fi && npx prisma generate
 COPY backend/src ./src

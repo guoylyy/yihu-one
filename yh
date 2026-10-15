@@ -31,7 +31,7 @@
 #   yh restore <code> <备份.sql.gz>     用备份恢复某个应用的数据库（code 为 console 时恢复控制台）
 #   yh db <code>                        进入某个应用的数据库命令行
 #   yh notify-test                      给通知群机器人发一条测试消息
-#   yh autostart                        安装开机自启 + 常驻 agent + 每晚 02:30 备份（macOS launchd / Linux systemd）
+#   yh autostart                        安装开机自启 + 常驻 agent + 每晚 02:30 备份（macOS launchd / Linux systemd；Docker 安装时是 yh-agent 容器）
 #   yh destroy                          清空本机平台（测试转生产前用；代码仓库不受影响）
 set -uo pipefail
 
@@ -59,7 +59,18 @@ load_env() {
   LOCAL_HTTP_PORT="${LOCAL_HTTP_PORT:-18080}"
   PUBLIC_URL="${PUBLIC_URL%/}"
   APPS_URL="${APPS_URL:-}"; APPS_URL="${APPS_URL%/}"
-  LOCAL="http://127.0.0.1:$LOCAL_HTTP_PORT"
+  if in_docker; then LOCAL="http://yh-caddy"; docker_join_net; else LOCAL="http://127.0.0.1:$LOCAL_HTTP_PORT"; fi
+}
+
+# Docker 安装（docker/Dockerfile 的平台镜像里跑 yh，借宿主机的 Docker）：本机端口在宿主机上，容器里的 127.0.0.1 访问不到，
+# 所以 yh 所在的容器接入 yh-net，经容器名直接找 Caddy。常驻的 yh-agent 容器建的时候就在 yh-net 里
+in_docker() { [ -n "${YH_DOCKER:-}" ]; }
+docker_self() { echo "${YH_SELF:-$(hostname)}"; }
+docker_join_net() {
+  in_docker || return 0
+  docker network inspect yh-net >/dev/null 2>&1 || return 0
+  docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' "$(docker_self)" 2>/dev/null | grep -qx yh-net && return 0
+  docker network connect yh-net "$(docker_self)" >/dev/null 2>&1 || true
 }
 
 is_test() { [ "${PLATFORM_MODE:-production}" = "test" ]; }
@@ -335,6 +346,7 @@ cmd_init() {
   if [ "$mode" = "test" ]; then
     local ip="localhost" bind="127.0.0.1"
     if [ -n "$lan" ]; then
+      in_docker && die "Docker 安装取不到宿主机的内网 IP：用 install.sh --company … --intranet --ip <宿主机内网 IP>"
       ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
       [ -n "$ip" ] || die "取不到本机内网 IP"
       bind="0.0.0.0"
@@ -385,6 +397,7 @@ cmd_start_platform() {
   local build="${1:-}"
   step "启动平台（Caddy / MySQL / Redis$( [ -n "${FRP_TOKEN:-}" ] && [ -n "${FRP_SERVER_ADDR:-}" ] && ! is_test && echo ' / 隧道') ）"
   docker network inspect yh-net >/dev/null 2>&1 || docker network create yh-net >/dev/null
+  docker_join_net
   mkdir -p "$PLATFORM/caddy/apps" "$ROOT/backups"
   local frpc_was_running; frpc_was_running="$(docker ps -q --filter name=^yh-frpc$ --filter status=running 2>/dev/null)"
   check_apps_url
@@ -1381,6 +1394,11 @@ cmd_agent() {
       last_public="$now"
       ( public_watch ) 2>&1 | nocolor
     fi
+    # Docker 安装没有 launchd / systemd 定时器：每晚 02:30 以后由 agent 备份一次（后台跑，不耽误领任务）
+    if in_docker && [ "$(date +%H%M)" -ge 230 ] && [ "$(cat "$ROOT/backups/.auto-backup" 2>/dev/null)" != "$(date +%F)" ]; then
+      date +%F > "$ROOT/backups/.auto-backup"
+      ( cmd_backup ) 2>&1 | nocolor >> "$ROOT/backups/backup.log" &
+    fi
     if [ $((now - last_watch)) -ge "${WATCH_INTERVAL:-120}" ]; then
       last_watch="$now"
       is_test || self_update agent # 有新版本：自更新后重启 agent（exec，不会回到这里）
@@ -1470,7 +1488,9 @@ cmd_doctor() {
   chk "MySQL" "docker exec yh-mysql mysqladmin ping -uroot -p$MYSQL_ROOT_PASSWORD --silent" "docker logs yh-mysql"
   chk "Redis" "docker exec yh-redis redis-cli ping" "yh start"
   chk "控制台" "console_ok" "yh logs console"
-  if [ "$(uname)" = "Darwin" ]; then
+  if in_docker; then
+    chk "常驻 agent（控制台操作、自动发布）" "docker ps --filter name=^yh-agent$ --filter status=running -q | grep ." "yh autostart"
+  elif [ "$(uname)" = "Darwin" ]; then
     chk "常驻 agent（控制台操作、自动发布）" "launchctl print gui/$(id -u)/one.yihu.agent" "yh autostart"
   else
     chk "常驻 agent（控制台操作、自动发布）" "systemctl is-active --quiet yh-agent" "yh autostart"
@@ -1562,7 +1582,9 @@ cmd_autostart() {
   load_env
   local log="$ROOT/backups/boot.log"
   mkdir -p "$ROOT/backups"
-  if [ "$(uname)" = "Darwin" ]; then
+  if in_docker; then
+    autostart_docker
+  elif [ "$(uname)" = "Darwin" ]; then
     local la="$HOME/Library/LaunchAgents" path_env="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     mkdir -p "$la"
     plist() { # plist <label> <yh 子命令> <额外 key>
@@ -1637,6 +1659,24 @@ EOF
   fi
 }
 
+# Docker 安装：常驻 agent 是一个容器（yh-agent，和安装用的同一个镜像），restart unless-stopped 替代开机自启——
+# Docker 起来它就起来；平台和应用的容器本来就是 unless-stopped。每晚备份由 agent 自己做（cmd_agent）
+autostart_docker() {
+  local self img sock
+  self="$(docker_self)"
+  [ "$self" != "yh-agent" ] || die "不能在 yh-agent 里重装它自己：在宿主机上执行 docker run --rm -it …（安装时的那条命令）yh autostart"
+  img="$(docker inspect -f '{{.Config.Image}}' "$self" 2>/dev/null)"
+  [ -n "$img" ] || die "认不出当前容器用的镜像"
+  # docker.sock 在宿主机上的路径（Windows 的 Docker Desktop 上可能是 //var/run/docker.sock）
+  sock="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}' "$self" 2>/dev/null)"
+  docker rm -f yh-agent >/dev/null 2>&1
+  docker run -d --name yh-agent --hostname yh-agent --restart unless-stopped --network yh-net \
+    -v "${sock:-/var/run/docker.sock}:/var/run/docker.sock" -v "$ROOT:$ROOT" -e YH_DIR="$ROOT" ${TZ:+-e TZ="$TZ"} \
+    --memory 256m --log-opt max-size=10m --log-opt max-file=3 "$img" agent >/dev/null || die "常驻 agent 容器起不来：docker logs yh-agent"
+  green "✅ 已启动常驻 agent 容器 yh-agent（镜像 ${img}，Docker 起来它就起来）；每晚 02:30 以后备份一次"
+  gray "   日志：docker logs -f yh-agent；运维命令：docker exec -it yh-agent yh status"
+}
+
 # 开机时调用：最多等 5 分钟 Docker 就绪
 cmd_boot() {
   echo "[$(date '+%F %T')] boot"
@@ -1652,6 +1692,8 @@ cmd_boot() {
 cmd_destroy() {
   [ -f "$ENV_FILE" ] && load_env
   red "将删除本机平台的全部容器、数据库（含控制台的用户和配置）、数据目录、应用密钥和备份（代码仓库不受影响）"
+  # Docker 安装：删容器会删到 yh-agent 自己，所以要从一个临时容器里执行
+  in_docker && [ "$(docker_self)" = "yh-agent" ] && die "在 yh-agent 里不能清空平台（会把自己删掉）：在宿主机上执行 docker run --rm -it …（安装时的那条命令）yh destroy"
   printf '确认请输入 destroy：'; read -r ans
   [ "$ans" = "destroy" ] || die "已取消"
   if [ "$(uname)" = "Darwin" ]; then
@@ -1660,6 +1702,7 @@ cmd_destroy() {
   local c
   for c in $(docker ps -aq --filter name=^yh-); do docker rm -f "$c" >/dev/null; done
   docker volume rm yh-platform_mysql-data yh-platform_caddy-data >/dev/null 2>&1
+  in_docker && docker network disconnect -f yh-net "$(docker_self)" >/dev/null 2>&1
   docker network rm yh-net >/dev/null 2>&1
   for c in $(docker network ls --format '{{.Name}}' | grep '^yh-app-'); do docker network rm "$c" >/dev/null 2>&1; done
   for c in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^yh-(app-|console)'); do docker rmi "$c" >/dev/null 2>&1; done
