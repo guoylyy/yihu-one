@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.5.0 — 2026-10-15
+
+Minor release: easier on-prem installs. A browser **setup wizard** (开通向导) takes admins through company info, theme, models (vendor presets + test), login methods (permission checklist, callback URLs, connection test for DingTalk / Feishu / WeCom), people (directory sync, or xlsx / CSV / paste import with departments, leaders and admins), notifications, apps (one-click official app install) and a downloadable onboarding report. `install.sh` asks step by step when run without arguments and gains an **intranet mode** (`--intranet`: no domain or tunnel, `http://<LAN IP>`). Machines with only Docker can install with the platform image (`docker run … ghcr.io/guoylyy/yihu-one:<version>`, same arguments as `install.sh`; the agent runs as the `yh-agent` container). Package-mode installs download a **prebuilt console image** from GHCR (built by GitHub Actions on every tag, amd64 + arm64) instead of building on site, with a local-build fallback. Fixed: consoles built with `CONSOLE_OMIT_OPTIONAL=1` crashed on startup. No database changes.
+
 ## 0.4.0 — 2026-10-15
 
 Minor release: apps for the boss. A daily business brief pushed to DingTalk / Feishu / WeCom, a preset 老板助理 (executive assistant), and a 管理层 home page, all fed by three read-only standard tools apps can implement (`get_key_metrics`, `get_daily_summary`, `list_pending_decisions`; see `/dev/briefing`). Scheduled AI tasks for everyone (read-only, run as their owner). New app tools are usable right after a deploy. One new table.
