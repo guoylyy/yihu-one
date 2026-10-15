@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.5.1 — 2026-10-15
+
+Patch release. Admins whose platform isn't fully onboarded are taken to the setup wizard when they open the home page (once per login, never after 完成开通); the home page 开始配置 card is retired and dropped from saved layouts. The open LLM API accepts image input (OpenAI `image_url`, converted for Anthropic models) and adds `POST /api/open/llm/embeddings`; the JS / Python SDKs gain `embed()`. No database changes.
+
 ## 0.5.0 — 2026-10-15
 
 Minor release: easier on-prem installs. A browser **setup wizard** (开通向导) takes admins through company info, theme, models (vendor presets + test), login methods (permission checklist, callback URLs, connection test for DingTalk / Feishu / WeCom), people (directory sync, or xlsx / CSV / paste import with departments, leaders and admins), notifications, apps (one-click official app install) and a downloadable onboarding report. `install.sh` asks step by step when run without arguments and gains an **intranet mode** (`--intranet`: no domain or tunnel, `http://<LAN IP>`). Machines with only Docker can install with the platform image (`docker run … ghcr.io/guoylyy/yihu-one:<version>`, same arguments as `install.sh`; the agent runs as the `yh-agent` container). Package-mode installs download a **prebuilt console image** from GHCR (built by GitHub Actions on every tag, amd64 + arm64) instead of building on site, with a local-build fallback. Fixed: consoles built with `CONSOLE_OMIT_OPTIONAL=1` crashed on startup. No database changes.
