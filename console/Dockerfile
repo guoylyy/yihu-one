@@ -2,7 +2,8 @@
 # 由 yh 在 yh init / yh start 时构建（platform/compose.yml），一般不用手动 docker build
 # 国内网络：yh.env 的 IMAGE_MIRROR / NPM_REGISTRY / PRISMA_ENGINES_MIRROR 经 compose 传进来（install.sh --cn 会填好），不填就走官方源
 ARG NODE_IMAGE=node:20-alpine
-FROM ${NODE_IMAGE} AS web
+# 前端构建产物和 CPU 架构无关：多架构构建（发版时的 amd64 + arm64）只在构建机的架构上跑一次
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS web
 ARG NPM_REGISTRY=
 WORKDIR /src/frontend
 COPY frontend/package*.json ./
@@ -23,6 +24,9 @@ COPY backend/prisma ./prisma
 RUN if [ -n "$PRISMA_ENGINES_MIRROR" ]; then export PRISMA_ENGINES_MIRROR; fi && npx prisma generate
 COPY backend/src ./src
 COPY --from=web /src/frontend/dist /app/frontend/dist
+# 版本标签：yh 下载预构建镜像时核对它和平台版本一致
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="yihu-one-console" org.opencontainers.image.version="$VERSION" org.opencontainers.image.source="https://github.com/guoylyy/yihu-one"
 ENV NODE_ENV=production PORT=3105 STATIC_DIR=/app/frontend/dist
 EXPOSE 3105
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://127.0.0.1:3105/health || exit 1

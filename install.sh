@@ -381,6 +381,7 @@ if [ -n "$CN" ]; then
   setkv IMAGE_MIRROR "docker.m.daocloud.io/"
   setkv NPM_REGISTRY "https://registry.npmmirror.com"
   setkv PRISMA_ENGINES_MIRROR "https://registry.npmmirror.com/-/binary/prisma"
+  setkv CONSOLE_IMAGE_REPO "ghcr.m.daocloud.io/guoylyy/yihu-one-console"
 fi
 [ -n "$NO_OPENHEX" ] && setkv CONSOLE_OMIT_OPTIONAL 1
 if [ "$MODE" = "production" ]; then
@@ -392,7 +393,7 @@ fi
 ok "yh.env 就绪（权限 600，密钥在下一步生成）"
 
 # ---------------------------------------------------------------- 4. 安装平台
-info "4/7 安装平台（第一次要构建控制台镜像，约 3~10 分钟）"
+info "4/7 安装平台（下载控制台镜像约 1~2 分钟；拿不到时现场构建，约 3~10 分钟）"
 if [ "$MODE" = "test" ]; then
   if [ -n "$LAN" ]; then ./yh init --test --lan || err "初始化失败，看上面的输出"
   else ./yh init --test || err "初始化失败，看上面的输出"; fi

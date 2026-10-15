@@ -406,9 +406,12 @@ cmd_start_platform() {
   wait_mysql
   ensure_db yh_console console "$CONSOLE_DB_PASSWORD" || die "控制台建库失败"
   green "  平台运行中"
-  step "启动控制台$( [ -n "$build" ] && echo '（构建镜像，首次约需几分钟）')"
+  step "启动控制台"
   if [ -n "$build" ] || ! docker image inspect yh-console:latest >/dev/null 2>&1; then
-    compose_platform build console 2>&1 | nocolor | grep -E "ERROR|error:" && die "控制台镜像构建失败：docker compose -f platform/compose.yml build console"
+    if ! console_pull; then
+      gray "  现场构建控制台镜像（约 3~10 分钟）"
+      compose_platform build console 2>&1 | nocolor | grep -E "ERROR|error:" && die "控制台镜像构建失败：docker compose -f platform/compose.yml build console"
+    fi
   fi
   compose_platform up -d >/dev/null 2>&1 || { compose_platform up -d; die "控制台启动失败"; }
   wait_console 240 || die "控制台 4 分钟内没起来：yh logs console"
@@ -419,6 +422,30 @@ cmd_start_platform() {
   connect_app_networks
   report_platform
   green "  控制台正常：$PUBLIC_URL"
+}
+
+# 预构建的控制台镜像：每次发版由 GitHub Actions 推到 GHCR（.github/workflows/console-image.yml，amd64 + arm64）。
+# 拉下来打成 yh-console:latest 就不用现场构建（快、不用访问 npm）。拉不到（内网、没发布这个版本）时返回 1，调用方现场构建。
+# CONSOLE_IMAGE（yh.env）：auto（默认）更新包方式安装时拉、Git 检出里构建（代码可能和发布版不一样）；pull 总是先拉；build 总是构建。
+# 预构建镜像不带 OpenHex SDK（不能再分发）：auto 时数据库里有 OpenHex 模型就照旧现场构建，免得升级后它不能用
+console_pull() {
+  local mode="${CONSOLE_IMAGE:-auto}" ver ref n got
+  [ "$mode" = "build" ] && return 1
+  if [ "$mode" = "auto" ]; then
+    [ -d "$ROOT/.git" ] && return 1
+    [ -n "${CONSOLE_OMIT_OPTIONAL:-}" ] || {
+      n="$(mysql_root -N yh_console -e "SELECT COUNT(*) FROM LlmConfig WHERE provider='OPENHEX' AND deletedAt IS NULL" 2>/dev/null | tr -d '[:space:]')"
+      [ "${n:-0}" = "0" ] || { gray "  有 OpenHex 模型，控制台照旧现场构建（预构建镜像不带 OpenHex SDK）"; return 1; }
+    }
+  fi
+  ver="$(platform_version)"
+  ref="${CONSOLE_IMAGE_REPO:-ghcr.io/guoylyy/yihu-one-console}:$ver"
+  gray "  下载预构建的控制台镜像 $ref"
+  docker pull -q "$ref" >/dev/null 2>&1 || { gray "  拉不到预构建镜像"; return 1; }
+  got="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$ref" 2>/dev/null)"
+  [ "$got" = "$ver" ] || { red "  预构建镜像的版本标签是「${got}」，不是 ${ver}，不用它"; return 1; }
+  docker tag "$ref" yh-console:latest || return 1
+  green "  已下载控制台镜像 $ver"
 }
 
 cmd_start() {
