@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.4.0 — 2026-10-15
+
+Minor release: apps for the boss. A daily business brief pushed to DingTalk / Feishu / WeCom, a preset 老板助理 (executive assistant), and a 管理层 home page, all fed by three read-only standard tools apps can implement (`get_key_metrics`, `get_daily_summary`, `list_pending_decisions`; see `/dev/briefing`). Scheduled AI tasks for everyone (read-only, run as their owner). New app tools are usable right after a deploy. One new table.
+
 ## 0.3.0 — 2026-10-14
 
 Minor release. Hosted apps can use a picture file from the repo as their icon (`"icon": "icon.png"` in `yh-app.json`, PNG/JPG/GIF/WebP/SVG up to 28 KB). Admins (管理 → 应用 → 设置) and app creators (创作中心 → 上架信息) can change a hosted app's icon in the console; a custom icon is kept on later deploys and can be reset to the manifest's. One database migration adds the columns.
