@@ -1,9 +1,10 @@
 // 千人千面首页：每个人一份自己的首页布局（存在 User.prefs.home，别人看不到），可以在网页上增删排序，也可以让自己的 Agent 经 MCP 改。
 // 布局是结构化 JSON，平台校验后才渲染——Agent 不能塞 HTML / 脚本（文本卡片只当纯文本显示，链接只认 http/https）。
-// 没改过的人用模板首页（就是原来的工作台：问候、开始配置、AI 助手、我的应用），不用 Agent 的人也能用。
+// 没改过的人用模板首页（就是原来的工作台：问候、AI 助手、我的应用），不用 Agent 的人也能用。
+// 管理员没配完平台时由前端带进开通向导（/onboarding），首页不再放「开始配置」卡片。
 //
 // 卡片类型：
-//   greeting  问候和日期            setup      管理员的开始配置清单（不是管理员不显示）
+//   greeting  问候和日期
 //   assistant AI 助手输入框          apps       我的应用（工作台）
 //   app       单个应用的大入口 { appId }
 //   link      外链 { title, url }    text       一段文字 { title, text }
@@ -20,8 +21,10 @@ import { get as getSetting } from './settings.js'
 import { isAdmin } from '../lib/auth.js'
 
 // metrics 关键指标 / decisions 待我决策 / events 风险与动态：来自各应用的标准工具（services/overview.js）；brief 最新一次经营简报
-export const TYPES = ['greeting', 'setup', 'assistant', 'apps', 'app', 'link', 'text', 'data', 'metrics', 'decisions', 'events', 'brief']
+export const TYPES = ['greeting', 'assistant', 'apps', 'app', 'link', 'text', 'data', 'metrics', 'decisions', 'events', 'brief']
 const OVERVIEW_TYPES = ['metrics', 'decisions', 'events', 'brief']
+// 已经不用的卡片类型：存过的首页、Agent 传来的布局里有它们时直接去掉，不报错（setup：0.5.0 起换成开通向导）
+const RETIRED = new Set(['setup'])
 export const VIEWS = ['auto', 'number', 'list', 'table', 'line']
 const MAX_CARDS = 30
 const DATA_TIMEOUT_MS = 15_000
@@ -29,7 +32,6 @@ const DATA_MAX_CHARS = 60_000
 
 export const TEMPLATE = [
   { id: 'greeting', type: 'greeting' },
-  { id: 'setup', type: 'setup' },
   { id: 'assistant', type: 'assistant' },
   { id: 'apps', type: 'apps' }
 ]
@@ -37,7 +39,6 @@ export const TEMPLATE = [
 /** 管理层首页：打开平台第一眼就是公司状况（docs/设计-老板应用.md） */
 export const BOSS_TEMPLATE = [
   { id: 'greeting', type: 'greeting' },
-  { id: 'setup', type: 'setup' },
   { id: 'brief', type: 'brief', title: '最新简报' },
   { id: 'metrics', type: 'metrics', title: '关键指标' },
   { id: 'decisions', type: 'decisions', title: '待我决策', width: 'half' },
@@ -73,7 +74,7 @@ export function normalizeCards(input, readOnlyTools = null) {
   if (!Array.isArray(input)) throw badRequest('cards 要是数组')
   if (input.length > MAX_CARDS) throw badRequest(`首页最多 ${MAX_CARDS} 张卡片`)
   const seen = new Set()
-  return input.map((c, i) => {
+  return input.filter(c => !RETIRED.has(c?.type)).map((c, i) => {
     const type = String(c?.type || '')
     if (!TYPES.includes(type)) throw badRequest(`第 ${i + 1} 张卡片的类型「${type}」不支持，只能是 ${TYPES.join(' / ')}`)
     let id = String(c.id || '').trim()
@@ -128,7 +129,7 @@ export async function getHome(ctx, { withCatalog = true } = {}) {
   const tpl = custom ? null : await defaultTemplate(ctx.user)
   const out = {
     custom,
-    cards: custom ? home.cards : tpl.cards,
+    cards: custom ? home.cards.filter(c => !RETIRED.has(c?.type)) : tpl.cards,
     template: tpl?.name || null,
     updatedAt: home?.updatedAt || null,
     source: home?.source || 'template'

@@ -1,6 +1,8 @@
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
+import { onboardingApi } from '@/api/admin'
+import { getToken } from '@/utils/token'
 
 /** 未登录跳 /login?redirect=；按 meta.permission 拦截 admin */
 export function installGuards(router) {
@@ -58,6 +60,11 @@ export function installGuards(router) {
       ElMessage.warning('没有访问该页面的权限')
       return hasCurrentRoute(router) ? false : { name: 'Home' }
     }
+    // 管理员进工作台时平台还没开通完：带进开通向导。每次登录只带一次（点「回工作台」后就不再拦），开通完不再带
+    if (user.permissions.admin && (to.name === 'Home' || to.name === 'Onboarding')) {
+      const r = await onboardingRedirect(to, user)
+      if (r) return r
+    }
     return true
   })
 
@@ -72,6 +79,21 @@ export function installGuards(router) {
     }
     applyTitle(to)
   })
+}
+
+/** 这次登录还没被带进过开通向导、平台也没开通完 → 去向导。记号按登录令牌存：重新登录后会再带一次 */
+async function onboardingRedirect(to, user) {
+  const key = `yh_onboarding_${user.me?.id}`
+  const mark = getToken().slice(-24)
+  let seen = false
+  try { seen = localStorage.getItem(key) === mark; localStorage.setItem(key, mark) } catch { /* 存不了就每次都查 */ }
+  if (seen || to.name === 'Onboarding') return null
+  try {
+    const st = await onboardingApi.status(true)
+    return !st.completedAt && st.todo.length ? { name: 'Onboarding' } : null
+  } catch {
+    return null
+  }
 }
 
 function hasCurrentRoute(router) {

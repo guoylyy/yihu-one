@@ -221,7 +221,7 @@ HINT="李四应在市场里看到它"; check "Agent 发布：分享的人能看�
 HINT="应被拒并说明要开发者"; check "Agent 发布：普通同事发不了代码应用" sh -c "$(declare -f mcp skillcall); B=$B J='$J'; skillcall '$KEY' publish_app '{\"kind\":\"HOSTED\",\"name\":\"x\",\"code\":\"st-hosted-x\",\"git\":\"https://example.com/x.git\",\"scope\":\"PRIVATE\"}' | grep -q '开发者'"
 
 # 千人千面首页：张三让 Agent 改自己的首页；数据卡片以本人身份取数；写操作工具不能当数据来源；李四不受影响
-HINT="没改过应是默认首页（问候、开始配置、AI 助手、我的应用）"; check "首页：默认模板" sh -c "$(declare -f mcp skillcall); B=$B J='$J'; skillcall '$KEY' get_my_home '{}' | jq -e '.custom == false and ([.cards[].type] | join(\",\")) == \"greeting,setup,assistant,apps\"'"
+HINT="没改过应是默认首页（问候、AI 助手、我的应用）"; check "首页：默认模板" sh -c "$(declare -f mcp skillcall); B=$B J='$J'; skillcall '$KEY' get_my_home '{}' | jq -e '.custom == false and ([.cards[].type] | join(\",\")) == \"greeting,assistant,apps\"'"
 HOME_SET="$(skillcall "$KEY" set_my_home '{"cards":[{"type":"greeting"},{"id":"myapps","type":"data","title":"我的应用","tool":"list_my_apps","view":"table"},{"type":"text","title":"提醒","text":"周五交周报"}]}')"
 HINT="应保存 3 张卡片，来源 agent"; check "首页：Agent 经 MCP 改首页" sh -c "echo '$HOME_SET' | jq -e '.custom == true and (.cards | length) == 3 and .source == \"agent\"'"
 HINT="数据卡片应以张三身份返回他的应用"; check "首页：数据卡片取数" sh -c "curl -s $B/api/me/home/cards/myapps/data -H 'Authorization: Bearer $T_ZS' | jq -e '.data.result | type == \"array\"'"

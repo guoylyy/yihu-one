@@ -5,11 +5,11 @@ import assert from 'node:assert/strict'
 process.env.JWT_SECRET ||= 'test-secret-at-least-16-chars'
 process.env.DATABASE_URL ||= 'mysql://u:p@127.0.0.1:1/none'
 
-const { normalizeCards, TEMPLATE, TYPES } = await import('../src/services/home.js')
+const { normalizeCards, TEMPLATE, BOSS_TEMPLATE, TYPES } = await import('../src/services/home.js')
 const RO = new Set(['list_my_apps', 'fde__pending_approvals'])
 
 test('默认首页 = 原来的工作台（问候、开始配置、AI 助手、我的应用）', () => {
-  assert.deepEqual(TEMPLATE.map(c => c.type), ['greeting', 'setup', 'assistant', 'apps'])
+  assert.deepEqual(TEMPLATE.map(c => c.type), ['greeting', 'assistant', 'apps'])
   assert.deepEqual(normalizeCards(TEMPLATE, RO), TEMPLATE, '模板本身能通过校验')
 })
 
@@ -40,9 +40,16 @@ test('数据卡片：只能用只读工具；折线图要 x / y；view 不认识
 })
 
 test('id：缺了或重复就重新生成，保证唯一', () => {
-  const cs = normalizeCards([{ id: 'a', type: 'apps' }, { id: 'a', type: 'assistant' }, { type: 'greeting' }, { id: 'bad id!', type: 'setup' }])
+  const cs = normalizeCards([{ id: 'a', type: 'apps' }, { id: 'a', type: 'assistant' }, { type: 'greeting' }, { id: 'bad id!', type: 'brief' }])
   assert.equal(new Set(cs.map(c => c.id)).size, 4)
   assert.equal(cs[0].id, 'a')
+})
+
+test('不再用的「开始配置」卡片：存过的、传来的都直接去掉，不报错；模板里也没有了', () => {
+  const cs = normalizeCards([{ id: 'g', type: 'greeting' }, { id: 'setup', type: 'setup' }, { id: 'a', type: 'apps' }])
+  assert.deepEqual(cs.map(c => c.type), ['greeting', 'apps'])
+  assert.ok(!TYPES.includes('setup'))
+  assert.ok(!BOSS_TEMPLATE.some(c => c.type === 'setup'))
 })
 
 test('数量上限、应用入口要有 appId、width 只认 half', () => {

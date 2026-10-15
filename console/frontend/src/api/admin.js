@@ -51,7 +51,7 @@ export const platformApi = {
 
 // 开通向导：各步骤的状态按真实配置算；配置本身还是走各自的接口（settingsApi、llm-configs、org）
 export const onboardingApi = {
-  status: () => get('/admin/onboarding'),
+  status: (silent = false) => get('/admin/onboarding', null, { silent }),
   skip: (step, skipped = true) => post('/admin/onboarding/skip', { step, skipped }),
   complete: () => post('/admin/onboarding/complete'),
   testLogin: provider => post('/admin/onboarding/test-login', { provider }, { timeout: 30000 }),

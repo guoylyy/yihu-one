@@ -173,7 +173,7 @@ export const TOOLS = [
     label: '查看我的首页',
     description: [
       '取当前用户的首页布局（cards，从上到下的顺序）和编辑目录：能放的应用（catalog.apps）、能用在数据卡片上的只读工具（catalog.tools）。改首页前先调用。',
-      '卡片类型：greeting 问候 / setup 管理员开始配置 / assistant AI 助手输入框 / apps 我的应用 / app 单个应用入口 {appId} / link 外链 {title,url} / text 文字 {title,text}（纯文本）/ ',
+      '卡片类型：greeting 问候 / assistant AI 助手输入框 / apps 我的应用 / app 单个应用入口 {appId} / link 外链 {title,url} / text 文字 {title,text}（纯文本）/ ',
       'data 数据卡片 {title, tool, args, view, x, y, field}：以用户本人身份调一个只读工具，view = auto 自动 | number 数字 | list 列表 | table 表格 | line 折线（x、y 填结果数组里对象的字段名）；结果是对象时用 field 指定取哪一层（如 data.list）。',
       '管理层用的卡片：metrics 关键指标 / decisions 待我决策 / events 风险与动态 / brief 最新经营简报（{title} 可选，数据来自各应用的标准工具，不用指定 tool）。',
       '每张卡片可以带 width: half（两张并排）、hidden: true。'
