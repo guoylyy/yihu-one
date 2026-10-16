@@ -4,6 +4,7 @@
 //   2. 使用数据：把「谁在应用里做了什么」上报给平台（批量、后台发送，失败不影响业务）
 //   3. 身份校验：平台 AI 助手调本应用 MCP 时带的 access_token，换成用户身份
 //   4. 大模型：应用直接用平台配置好的模型（OpenAI 兼容），不用自己配密钥
+//   5. 文件存储：大文件（课件、视频、图片）放平台配置的对象存储（七牛云），不用自己配密钥，也不用进代码仓库
 //
 // 配置（环境变量或构造参数）：
 //   YH_CLIENT_ID / YH_CLIENT_SECRET   平台托管的应用由 yh 自动注入；外部应用在「管理 → 应用 → 登记外部应用」获得
@@ -247,6 +248,62 @@ export class Workspace {
     const data = await r.json().catch(() => ({}))
     if (!r.ok) throw new WorkspaceError(data.error?.message || `平台返回 HTTP ${r.status}`)
     return (data.data || []).sort((a, b) => a.index - b.index).map(d => d.embedding)
+  }
+
+  /**
+   * 文件存储（管理员在「系统设置 → 文件存储」里配置）。key 都是相对本应用目录的路径，如 'courseware/B-05.pptx'
+   *   storage.info()                                  → { enabled, private, maxUploadMB, root }
+   *   storage.put(key, buffer, { mime, overwrite })   → { key, hash, size, mime }   服务端直接传（经平台签发的凭证直传七牛）
+   *   storage.uploadToken({ key, expires, maxSizeMB, mime, overwrite })
+   *                                                   → { uploadUrl, token, key, fullKey, expiresAt }  交给浏览器直传：
+   *                                                     表单 POST uploadUrl，字段 token、key=fullKey、file
+   *   storage.url(key, { expires, filename })         → 下载地址（私有空间带签名，默认 1 小时有效）
+   *   storage.get(key)                                → Buffer
+   *   storage.stat(key) / storage.list({ prefix, limit, marker }) / storage.remove(key)
+   */
+  get storage() {
+    if (this._storage) return this._storage
+    const auth = () => {
+      if (!this.clientId || !this.clientSecret) throw new WorkspaceError('缺少应用凭证（YH_CLIENT_ID / YH_CLIENT_SECRET）')
+      return { Authorization: this.basic() }
+    }
+    const q = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => [k, String(v)])).toString()
+    const s = {
+      info: () => this.call('GET', '/api/open/storage', { headers: auth() }),
+      uploadToken: (opts = {}) => this.call('POST', '/api/open/storage/upload-token', { body: opts, headers: auth() }),
+      url: async (key, { expires, filename } = {}) => (await this.call('GET', `/api/open/storage/url?${q({ key, expires, filename })}`, { headers: auth() })).url,
+      stat: (key) => this.call('GET', `/api/open/storage/stat?${q({ key })}`, { headers: auth() }),
+      list: ({ prefix, limit, marker } = {}) => this.call('GET', `/api/open/storage/list?${q({ prefix, limit, marker })}`, { headers: auth() }),
+      remove: (key) => this.call('DELETE', `/api/open/storage/object?${q({ key })}`, { headers: auth() }),
+      put: async (key, data, { mime = 'application/octet-stream', overwrite, timeoutMs = 600_000 } = {}) => {
+        const t = await s.uploadToken({ key, overwrite })
+        const form = new FormData()
+        form.append('token', t.token)
+        form.append('key', t.fullKey)
+        form.append('file', new Blob([data], { type: mime }), key.split('/').pop())
+        let r
+        try {
+          r = await fetch(t.uploadUrl, { method: 'POST', body: form, signal: AbortSignal.timeout(timeoutMs) })
+        } catch (e) {
+          throw new WorkspaceError(`连不上文件存储 ${t.uploadUrl}：${e.message}`)
+        }
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) throw new WorkspaceError(`上传失败：${j.error || `HTTP ${r.status}`}`)
+        return { key: t.key, hash: j.hash, size: j.size, mime: j.mime }
+      },
+      get: async (key, { timeoutMs = 600_000 } = {}) => {
+        const url = await s.url(key)
+        let r
+        try {
+          r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+        } catch (e) {
+          throw new WorkspaceError(`连不上文件存储：${e.message}`)
+        }
+        if (!r.ok) throw new WorkspaceError(r.status === 404 ? `文件不存在：${key}` : `下载失败：HTTP ${r.status}`)
+        return Buffer.from(await r.arrayBuffer())
+      }
+    }
+    return (this._storage = s)
   }
 }
 

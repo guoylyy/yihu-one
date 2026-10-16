@@ -15,6 +15,7 @@ import * as notifySvc from '../services/notify.js'
 import { sealKey, openKey, complete, embed } from '../agent/llm.js'
 import * as spaces from '../services/spaces.js'
 import * as onboarding from '../services/onboarding.js'
+import * as storage from '../services/objectStorage.js'
 
 const router = express.Router()
 router.use((req, res, next) => { try { assertAdmin(req.ctx); next() } catch (e) { next(e) } })
@@ -34,6 +35,7 @@ router.delete('/apps/:id', wrap(req => apps.adminDelete(req.ctx, req.params.id))
 router.get('/usage', wrap(req => usage.overview(req.ctx, req.query)))
 // 系统设置「发布通知」里的测试按钮
 router.post('/notify/test', wrap(req => notifySvc.sendTest(req.ctx)))
+router.post('/storage/test', wrap(req => storage.testConnection(req.ctx)))
 
 // ---------- 开通向导 ----------
 router.get('/onboarding', wrap(req => onboarding.status(req.ctx)))

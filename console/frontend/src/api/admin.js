@@ -31,7 +31,8 @@ export const usageApi = {
 export const settingsApi = {
   list: page => get('/admin/settings', { page }),
   save: (group, data) => put(`/admin/settings/${group}`, data),
-  notifyTest: () => post('/admin/notify/test', null, { timeout: 30000 })
+  notifyTest: () => post('/admin/notify/test', null, { timeout: 30000 }),
+  storageTest: () => post('/admin/storage/test', null, { timeout: 90000 })
 }
 
 // 平台运维：控制台排队，宿主机上的 yh agent 领取执行

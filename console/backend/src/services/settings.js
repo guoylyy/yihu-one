@@ -73,6 +73,23 @@ export const SCHEMA = {
       bootstrapAdmins: { label: '钉钉管理员（userid）', type: 'list', default: [], help: '这些人钉钉登录后自动成为管理员。userid 在钉钉管理后台 → 通讯录 → 成员详情里' }
     }
   },
+  storage: {
+    label: '文件存储（七牛云）',
+    page: 'settings',
+    // 平台的大文件存储：应用经开放接口 /api/open/storage/* 用（课件、附件、图片），各应用只能读写自己的目录 apps/<code>/
+    fields: {
+      enabled: { label: '启用文件存储', type: 'bool', default: false, help: '打开后应用可以把大文件（课件、视频、附件）存到七牛云，平台只发上传凭证和下载地址，文件不经过平台。保存后点「测试连接」验证' },
+      accessKey: { label: 'AccessKey', type: 'text', default: '', help: '七牛控制台 → 个人中心 → 密钥管理（AK）。建议给平台单独建一对密钥' },
+      secretKey: { label: 'SecretKey', type: 'password', default: '', help: '同一页的 SK，加密保存' },
+      bucket: { label: '存储空间（Bucket）', type: 'text', default: '', help: '七牛控制台 → 对象存储 → 空间管理里的空间名称。建议用私有空间' },
+      region: { label: '区域', type: 'text', default: 'z0', help: '空间所在区域：z0 华东-浙江 · cn-east-2 华东-浙江2 · z1 华北-河北 · z2 华南-广东 · na0 北美 · as0 亚太-新加坡' },
+      domain: { label: '下载域名', type: 'url', default: '', help: '空间绑定的域名，带 http:// 或 https://（如 https://files.example.com）；七牛给的测试域名只能临时用' },
+      privateBucket: { label: '私有空间', type: 'bool', default: true, help: '私有空间的文件只能用平台签发的限时地址下载（推荐）；公开空间的地址谁拿到都能下' },
+      keyPrefix: { label: '文件名前缀', type: 'text', default: 'yihu-one/', help: '平台所有文件都放在这个目录下，多套平台共用一个空间时用它区分。应用的文件在「前缀 + apps/应用 code/」' },
+      maxUploadMB: { label: '单个文件上限（MB）', type: 'number', default: 500, min: 1, max: 10240, help: '上传凭证里限制的单个文件大小' },
+      uploadHost: { label: '上传地址（可选）', type: 'url', default: '', help: '一般不用填，按区域自动选；用了七牛的加速上传域名或私有部署时才填' }
+    }
+  },
   market: {
     label: '应用市场',
     page: 'market',

@@ -12,6 +12,7 @@ import { masterUsers } from '../services/users.js'
 import { spacesOfApp } from '../services/spaces.js'
 import * as usage from '../services/usage.js'
 import * as openApp from '../services/openApp.js'
+import * as storage from '../services/objectStorage.js'
 
 export const ssoRouter = express.Router()
 
@@ -89,6 +90,13 @@ openRouter.get('/users', wrap(req => masterUsers({ ...req.query, spaceIds: space
 openRouter.get('/app', wrap(req => openApp.appInfo(req.app_)))
 // 给个人发消息: 经平台配置的钉钉 / 飞书 / 企业微信(只有可信应用)
 openRouter.post('/notify', wrap(req => openApp.notifyUsers(req.app_, req.body || {})))
+// 文件存储（七牛云）: 平台发上传凭证 / 下载地址, 文件不经过平台; 应用只能动自己的目录 apps/<code>/
+openRouter.get('/storage', wrap(req => storage.info(req.app_)))
+openRouter.post('/storage/upload-token', wrap(req => storage.uploadToken(req.app_, req.body || {})))
+openRouter.get('/storage/url', wrap(req => storage.downloadUrl(req.app_, req.query)))
+openRouter.get('/storage/stat', wrap(req => storage.stat(req.app_, req.query.key)))
+openRouter.get('/storage/list', wrap(req => storage.list(req.app_, req.query)))
+openRouter.delete('/storage/object', wrap(req => storage.remove(req.app_, req.query.key)))
 // 使用数据上报: 用户在应用里做了什么
 openRouter.post('/events', wrap(req => usage.ingest(req.app_, req.body || {})))
 // 应用大模型: OpenAI 兼容, 平台托管模型与密钥; 可选 X-User-Token 按人记用量

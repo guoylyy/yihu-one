@@ -32,6 +32,11 @@ ws.track(user, "quote.compare", {"to": "北京市朝阳区", "weight": 5})
 
 # MCP 身份
 user = ws.user_from_token(request_headers.get("Authorization"))   # 无效返回 None
+
+# 文件存储（见开发中心「文件存储」）
+ws.storage.put("courseware/B-05.pptx", data, mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+url = ws.storage.url("courseware/B-05.pptx", filename="B-05.pptx")   # 私有空间带签名，默认 1 小时
+data = ws.storage.get("courseware/B-05.pptx")
 ```
 
 ## Flask 示例

@@ -14,6 +14,7 @@
           <div class="yh-grow"></div>
           <span v-if="dirtyCount(g)" class="dirty-tip">{{ dirtyCount(g) }} 项未保存</span>
           <el-button v-if="g.key === 'notify'" size="small" :loading="notifyTesting" @click="testNotify">发测试消息</el-button>
+          <el-button v-if="g.key === 'storage'" size="small" :disabled="!!dirtyCount(g)" :loading="storageTesting" @click="testStorage">测试连接</el-button>
           <el-button size="small" :disabled="!dirtyCount(g)" @click="resetDraft(g)">撤销</el-button>
           <el-button size="small" type="primary" :disabled="!dirtyCount(g)" :loading="saving[g.key]" @click="saveGroup(g)">保存</el-button>
         </div>
@@ -103,7 +104,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { settingsApi } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import { useAssistantStore } from '@/stores/assistant'
@@ -194,6 +195,20 @@ async function testNotify() {
     notifyTesting.value = false
   }
 }
+
+// 文件存储：上传 → 查询 → 取回 → 删除，逐步显示结果（先保存再测）
+const storageTesting = ref(false)
+async function testStorage() {
+  storageTesting.value = true
+  try {
+    const r = await settingsApi.storageTest()
+    const html = (r?.steps || []).map(s => `<div style="margin:4px 0">${s.ok ? '✅' : '❌'} <b>${esc(s.name)}</b>${s.detail ? '　<span style="color:var(--yh-text-3)">' + esc(s.detail) + '</span>' : ''}</div>`).join('')
+    await ElMessageBox.alert(html, r?.ok ? '文件存储可以用了' : '文件存储还不能用', { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' })
+  } finally {
+    storageTesting.value = false
+  }
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 
 async function load() {
   loading.value = true

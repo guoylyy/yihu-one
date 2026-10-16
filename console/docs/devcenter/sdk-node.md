@@ -43,6 +43,7 @@ app.get('/', (req, res) => {
 | `ws.logout(req)` | 清会话 |
 | `ws.track(user, action, detail)` | 上报使用数据 |
 | `await ws.userFromToken(authorization)` | MCP 调用的 Bearer token → 用户，无效 `null` |
+| `await ws.storage.put(key, buffer, { mime })` / `get(key)` / `url(key)` / `uploadToken({ key })` / `stat` / `list` / `remove` | 平台文件存储（七牛云），见 [文件存储](/dev/storage) |
 
 ## MCP
 

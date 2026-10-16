@@ -6,6 +6,7 @@
   2. 使用数据：把「谁在应用里做了什么」上报给平台（后台线程批量发送，失败不影响业务）
   3. 身份校验：平台 AI 助手调本应用 MCP 时带的 access_token，换成用户身份
   4. 大模型：应用直接用平台配置好的模型（OpenAI 兼容），不用自己配密钥
+  5. 文件存储：大文件（课件、视频、图片）放平台配置的对象存储（七牛云），不用自己配密钥，也不用进代码仓库
 
 配置（环境变量）：
   YH_CLIENT_ID / YH_CLIENT_SECRET   平台托管的应用由 yh 自动注入；外部应用在「管理 → 应用 → 登记外部应用」获得
@@ -76,6 +77,7 @@ class Workspace:
         self._lock = threading.Lock()
         self._token_cache: dict[str, tuple[float, dict]] = {}
         self._events: queue.Queue = queue.Queue(maxsize=10000)
+        self.storage = Storage(self)
         if self.enabled:
             threading.Thread(target=self._flush_loop, daemon=True, name="yh-usage").start()
 
@@ -308,3 +310,85 @@ class Workspace:
                     pass
         finally:
             conn.close()
+
+
+class Storage:
+    """文件存储（管理员在「系统设置 → 文件存储」里配置）。key 都是相对本应用目录的路径，如 "courseware/B-05.pptx"。
+
+      ws.storage.info()                                → {enabled, private, maxUploadMB, root}
+      ws.storage.put(key, data, mime=..., overwrite=True) → {key, hash, size, mime}  凭平台签发的凭证直传七牛
+      ws.storage.upload_token(key, ...)                → {uploadUrl, token, key, fullKey, expiresAt}  交给浏览器直传：
+                                                         表单 POST uploadUrl，字段 token、key=fullKey、file
+      ws.storage.url(key, expires=3600, filename=None) → 下载地址（私有空间带签名）
+      ws.storage.get(key)                              → bytes
+      ws.storage.stat(key) / list(prefix=..., limit=..., marker=...) / remove(key)
+    """
+
+    def __init__(self, ws: Workspace):
+        self._ws = ws
+
+    def _auth(self) -> dict:
+        if not (self._ws.client_id and self._ws.client_secret):
+            raise WorkspaceError("缺少应用凭证（YH_CLIENT_ID/YH_CLIENT_SECRET）")
+        return {"Authorization": self._ws._basic()}
+
+    def _q(self, **kw) -> str:
+        return urlencode({k: v for k, v in kw.items() if v is not None and v != ""})
+
+    def info(self) -> dict:
+        return self._ws._call("GET", "/api/open/storage", headers=self._auth())
+
+    def upload_token(self, key: str, expires: int | None = None, max_size_mb: float | None = None,
+                     mime: str | None = None, overwrite: bool | None = None) -> dict:
+        body = {k: v for k, v in {"key": key, "expires": expires, "maxSizeMB": max_size_mb,
+                                  "mime": mime, "overwrite": overwrite}.items() if v is not None}
+        return self._ws._call("POST", "/api/open/storage/upload-token", body=body, headers=self._auth())
+
+    def url(self, key: str, expires: int | None = None, filename: str | None = None) -> str:
+        return self._ws._call("GET", "/api/open/storage/url?" + self._q(key=key, expires=expires, filename=filename),
+                              headers=self._auth())["url"]
+
+    def stat(self, key: str) -> dict:
+        return self._ws._call("GET", "/api/open/storage/stat?" + self._q(key=key), headers=self._auth())
+
+    def list(self, prefix: str = "", limit: int | None = None, marker: str | None = None) -> dict:
+        return self._ws._call("GET", "/api/open/storage/list?" + self._q(prefix=prefix, limit=limit, marker=marker),
+                              headers=self._auth())
+
+    def remove(self, key: str) -> dict:
+        return self._ws._call("DELETE", "/api/open/storage/object?" + self._q(key=key), headers=self._auth())
+
+    def put(self, key: str, data: bytes, mime: str = "application/octet-stream",
+            overwrite: bool | None = None, timeout: int = 600) -> dict:
+        t = self.upload_token(key, overwrite=overwrite)
+        boundary = "----yhone" + secrets.token_hex(12)
+        name = key.rsplit("/", 1)[-1].replace('"', "_")
+        parts = []
+        for k, v in (("token", t["token"]), ("key", t["fullKey"])):
+            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
+                     f"Content-Type: {mime}\r\n\r\n".encode())
+        payload = b"".join(parts) + bytes(data) + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(t["uploadUrl"], data=payload, method="POST",
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                j = json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read() or b"{}").get("error")
+            except json.JSONDecodeError:
+                msg = None
+            raise WorkspaceError(f"上传失败：{msg or f'HTTP {e.code}'}") from e
+        except (urllib.error.URLError, TimeoutError) as e:
+            raise WorkspaceError(f"连不上文件存储 {t['uploadUrl']}：{e}") from e
+        return {"key": t["key"], "hash": j.get("hash"), "size": j.get("size"), "mime": j.get("mime")}
+
+    def get(self, key: str, timeout: int = 600) -> bytes:
+        try:
+            with urllib.request.urlopen(self.url(key), timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            raise WorkspaceError(f"文件不存在：{key}" if e.code == 404 else f"下载失败：HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError) as e:
+            raise WorkspaceError(f"连不上文件存储：{e}") from e
