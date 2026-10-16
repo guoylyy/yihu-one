@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.6.0 — 2026-10-15
+
+Minor release: platform file storage backed by Qiniu Kodo. Admins configure it in 系统设置 → 文件存储 and run a step-by-step connection test; apps use `/api/open/storage/*` (upload tokens for direct uploads, signed download URLs, stat / list / delete, each app confined to its own folder) and the new `ws.storage` helpers in the JS and Python SDKs. Off by default. No database changes.
+
 ## 0.5.3 — 2026-10-15
 
 Patch release. The directory API (`GET /api/open/users`) includes each person's `avatar`, so apps can sync head icons with the rest of the profile instead of waiting for each person to sign in (FDE 0.3.1 does). No database changes.
