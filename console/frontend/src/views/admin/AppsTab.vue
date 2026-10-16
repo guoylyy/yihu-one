@@ -45,13 +45,25 @@
           <el-tag v-else size="small" effect="plain" type="info">{{ APP_TYPE[row.type] || row.type }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="版本" min-width="170">
+        <template #default="{ row }">
+          <template v-if="row.managed">
+            <div v-if="row.runtime?.version" class="app-ver">v{{ row.runtime.version }}</div>
+            <div v-else class="yh-muted small" title="在 yh-app.json 或 package.json 里写 version，这里就会显示">未标版本号</div>
+            <div class="yh-muted small">
+              <span v-if="row.runtime?.commit" class="ver" :title="row.runtime.commitAt ? `提交于 ${formatDateTime(row.runtime.commitAt)}` : ''">{{ row.runtime.commit }}</span>
+              <span v-if="row.runtime?.deployedAt" :title="formatDateTime(row.runtime.deployedAt)"> 发布于 {{ fromNow(row.runtime.deployedAt) }}</span>
+            </div>
+          </template>
+          <span v-else class="yh-muted small">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="运行" min-width="170">
         <template #default="{ row }">
           <template v-if="row.managed">
             <div class="yh-flex run">
               <span class="dot" :class="runClass(row)"></span>
               <span>{{ runText(row) }}</span>
-              <span v-if="row.runtime?.version" class="ver">{{ row.runtime.version }}</span>
             </div>
             <div class="yh-muted small">
               <template v-if="busyOf(row)">{{ OP_KIND[busyOf(row).kind] }}{{ busyOf(row).status === 'PENDING' ? '排队中' : '中…' }}</template>
@@ -611,6 +623,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 .dot.off { background: #cbd5e1; }
 .dot.busy { background: var(--yh-warning); animation: blink 1s infinite; }
 @keyframes blink { 50% { opacity: .3; } }
+.app-ver { font-weight: 600; font-variant-numeric: tabular-nums; }
 .ver { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--yh-text-3); background: var(--yh-fill-2); padding: 0 5px; border-radius: 4px; }
 .vis-box { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px; background: var(--yh-fill); border-radius: 8px; }
 .sec-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; }

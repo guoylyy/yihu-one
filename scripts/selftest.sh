@@ -313,6 +313,7 @@ HINT="见 agent.log"; check "从 Git 安装（控制台下发，agent 执行）"
 HINT="应为 v1"; check "安装后应用可访问（跟踪 release 分支）" [ "$(ver)" = v1 ]
 sleep 35
 HINT="控制台里应有 rel-demo 的运行状态"; check "agent 上报运行状态" sh -c "curl -s $B/api/admin/apps -H 'Authorization: Bearer $T' | jq -e '.data[] | select(.code==\"rel-demo\") | .runtime.health == \"ok\"'"
+HINT="版本取模板 package.json 的 version，提交取 Git 接入的源码（yh status_json → platform.reportStatus）"; check "agent 上报应用版本号和提交" sh -c "curl -s $B/api/admin/apps -H 'Authorization: Bearer $T' | jq -e '.data[] | select(.code==\"rel-demo\") | .runtime.version == \"0.1.0\" and (.runtime.commit | test(\"^[0-9a-f]{7}$\")) and (.runtime.deployedAt | length > 0)'"
 push_ver v2
 HINT="应为 v2"; check "控制台「发布」拉最新代码上线" sh -c "[ \"$(op DEPLOY rel-demo)\" = SUCCESS ] && [ \"\$(curl -s $B/apps/rel-demo/health | jq -r .v)\" = v2 ]"
 HINT="停用后应 404"; check "控制台「停用」" sh -c "[ \"$(op STOP rel-demo)\" = SUCCESS ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' $B/apps/rel-demo/health)\" = 404 ]"

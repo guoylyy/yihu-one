@@ -1,6 +1,7 @@
 {
   "code": "__CODE__",
   "name": "__NAME__",
+  "version": "0.1.0",
   "icon": "🧩",
   "category": "工具",
   "description": "",

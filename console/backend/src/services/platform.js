@@ -87,16 +87,25 @@ export async function removeApp(code) {
   return { ok: true }
 }
 
-/** yh agent 定时上报各应用运行状态: [{ code, state, health, version, memory }] */
+/**
+ * yh agent 定时上报各应用运行状态: [{ code, state, health, version, commit, commitAt, deployedAt, memory }]
+ *   version 应用自己的版本号（清单 / package.json），commit 源码提交（Git 接入的才有），deployedAt 最近一次发布 / 重建
+ */
+export function runtimeOf(r, at) {
+  const str = (v, n) => (typeof v === 'string' && v ? v.slice(0, n) : null)
+  let version = str(r.version, 40)
+  let commit = str(r.commit, 40)
+  // 老版本 yh 把提交号放在 version 里
+  if (version && !commit && /^[0-9a-f]{7,40}$/.test(version)) { commit = version; version = null }
+  return { state: str(r.state, 20), health: str(r.health, 40), version, commit, commitAt: str(r.commitAt, 40), deployedAt: str(r.deployedAt, 40), memory: str(r.memory, 40), at }
+}
+
 export async function reportStatus(list) {
   if (!Array.isArray(list)) throw badRequest('需要数组')
   const at = new Date().toISOString()
   for (const r of list) {
     if (!CODE.test(r?.code || '')) continue
-    await prisma.app.updateMany({
-      where: { code: r.code, deletedAt: null },
-      data: { runtime: { state: r.state || null, health: r.health || null, version: r.version || null, memory: r.memory || null, at } }
-    })
+    await prisma.app.updateMany({ where: { code: r.code, deletedAt: null }, data: { runtime: runtimeOf(r, at) } })
   }
   return { ok: true }
 }

@@ -1288,9 +1288,22 @@ cmd_history() { # yh history [code]
 # ---------------------------------------------------------------- agent：控制台 ↔ 宿主机
 # 控制台容器不碰 Docker。管理员在控制台点的操作排进队列，agent 每几秒领一个执行，把日志交回控制台
 
+# 应用版本号（应用自己定的语义化版本，给人看的）：清单 version → 源码 package.json → backend/package.json，都没有为空
+app_version() { # app_version <code>
+  local c="$1" m v="" f
+  m="$(manifest "$c")"; [ -n "$m" ] && v="$(mf "$m" .version)"
+  if [ -z "$v" ]; then
+    for f in "$APPS/$c/src/package.json" "$APPS/$c/src/backend/package.json"; do
+      if [ -f "$f" ]; then v="$(jq -r '.version // empty' "$f" 2>/dev/null)"; fi
+      if [ -n "$v" ]; then break; fi
+    done
+  fi
+  echo "$v"
+}
+
 # 各应用运行状态 → JSON 数组
 status_json() {
-  local d c m st hc ver mem stats="" out="[" sep=""
+  local d c m st hc ver commit commitAt deployedAt mem stats="" out="[" sep=""
   stats="$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null)"
   for d in "$APPS"/*/; do
     [ -d "$d" ] || continue
@@ -1302,10 +1315,18 @@ status_json() {
       [ "$hc" = "200" ] && hc="ok" || hc="HTTP $hc"
     fi
     [ -f "$d/.stopped" ] && { st="stopped"; hc="stopped"; }
-    # 只有从 Git 接入的应用有版本（本机目录接入的，git 会一路找到平台仓库自己的提交）
-    ver=""; [ -e "$d/src/.git" ] && ver="$(git -C "$d/src" rev-parse --short=7 HEAD 2>/dev/null)"
+    ver="$(app_version "$c")"
+    # 提交只有从 Git 接入的应用有（本机目录接入的，git 会一路找到平台仓库自己的提交）
+    commit=""; commitAt=""
+    if [ -e "$d/src/.git" ]; then
+      commit="$(git -C "$d/src" rev-parse --short=7 HEAD 2>/dev/null)"
+      commitAt="$(git -C "$d/src" log -1 --format=%cI 2>/dev/null)"
+    fi
+    # 容器创建时间 = 最近一次发布 / 重建的时间
+    deployedAt="$(docker inspect -f '{{.Created}}' "yh-$c" 2>/dev/null)"
     mem="$(echo "$stats" | awk -v n="yh-$c" '$1==n {print $2}')"
-    out="$out$sep$(jq -cn --arg c "$c" --arg s "$st" --arg h "$hc" --arg v "$ver" --arg mem "$mem" '{code:$c, state:$s, health:$h, version:$v, memory:$mem}')"
+    out="$out$sep$(jq -cn --arg c "$c" --arg s "$st" --arg h "$hc" --arg v "$ver" --arg mem "$mem" --arg cm "$commit" --arg ca "$commitAt" --arg da "$deployedAt" \
+      '{code:$c, state:$s, health:$h, version:$v, commit:$cm, commitAt:$ca, deployedAt:$da, memory:$mem}')"
     sep=","
   done
   echo "$out]"
@@ -1469,7 +1490,7 @@ cmd_status() {
   console_ok && hc="正常" || hc="异常"
   printf '%-14s %-10s %-9s %-10s %-8s %s\n' "console" "$st" "$(docker stats --no-stream --format '{{.MemUsage}}' yh-console 2>/dev/null | cut -d/ -f1 | tr -d ' ')" "$hc" \
     "$(if [ "$(platform_mode)" = "git" ]; then git -C "$ROOT" rev-parse --short=7 HEAD 2>/dev/null || echo -; else platform_version; fi)" "$PUBLIC_URL"
-  echo "$(status_json)" | jq -r '.[] | [.code, .state, (if .memory == "" then "-" else .memory end), (if .health == "ok" then "正常" elif .health == "stopped" then "已停用" else "异常(" + .health + ")" end), (if .version == "" then "-" else .version end)] | @tsv' \
+  echo "$(status_json)" | jq -r '.[] | [.code, .state, (if .memory == "" then "-" else .memory end), (if .health == "ok" then "正常" elif .health == "stopped" then "已停用" else "异常(" + .health + ")" end), (if .version != "" then "v" + .version + (if .commit != "" then " (" + .commit + ")" else "" end) elif .commit != "" then .commit else "-" end)] | @tsv' \
     | while IFS=$'\t' read -r c s mem h v; do printf '%-14s %-10s %-9s %-10s %-8s %s\n' "$c" "$s" "$mem" "$h" "$v" "$(app_url "$c")/"; done
   echo
   gray "平台：$(docker ps --filter name=yh- --format '{{.Names}}' | grep -E 'caddy|mysql|redis|frpc' | tr '\n' ' ')"

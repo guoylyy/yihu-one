@@ -158,7 +158,7 @@ model App {
   /// 代码来源: git 地址 / 本机目录 / 模板
   source             String?      @db.VarChar(500)
   branch             String?      @db.VarChar(100)
-  /// yh agent 上报的运行状态 { state, health, version, memory, at }
+  /// yh agent 上报的运行状态 { state, health, version（应用版本号）, commit, commitAt, deployedAt, memory, at }
   runtime            Json?
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt

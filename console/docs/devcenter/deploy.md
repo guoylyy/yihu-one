@@ -3,7 +3,7 @@ title: 应用部署规范
 category: 入门
 order: 3
 summary: 应用要满足哪些条件，才能插到以虎 One 上一键部署、自动发布
-updated: 2026-10-10
+updated: 2026-10-16
 ---
 
 # 应用部署规范
@@ -60,6 +60,7 @@ CMD ["node", "server.js"]
 | --- | --- |
 | `code` | 决定地址、容器名、数据库名，**定了不要改**。小写字母开头，只含小写字母、数字、短横线 |
 | `name` / `icon` / `category` / `description` | 工作台上显示。每次发布都以清单为准 |
+| `version` | 可选，应用自己的版本号（建议 `x.y.z`），显示在控制台「管理 → 应用」的「版本」列。不写就取源码 `package.json`（或 `backend/package.json`）的 `version`；发新版记得改它 |
 | `iconColor` | 可选，图标配色，`#RRGGBB`（如 `"#10b981"`）。不写就按名称自动配一个底色 |
 | `port` | 容器里监听的端口 |
 | `health` | 健康检查路径，默认 `/health` |
