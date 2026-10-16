@@ -549,7 +549,7 @@ export async function masterUsers({ updatedSince, includeInactive, spaceIds } = 
     generatedAt: new Date().toISOString(),
     total: rows.length,
     list: rows.map(u => ({
-      id: u.id, username: u.username, name: u.name, jobNumber: u.jobNumber || null, title: u.title || null,
+      id: u.id, username: u.username, name: u.name, avatar: u.avatar || null, jobNumber: u.jobNumber || null, title: u.title || null,
       mobile: u.mobile || null, email: u.email || null, active: u.active, dingUserId: u.dingUserId,
       feishuOpenId: u.feishuOpenId || null, wecomUserId: u.wecomUserId || null, spaceId: u.spaceId,
       depts: u.depts.map(d => ({ id: d.departmentId, name: byId.get(d.departmentId)?.name, path: pathOf(d.departmentId), isPrimary: d.isPrimary })),

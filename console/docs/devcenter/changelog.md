@@ -10,6 +10,7 @@ updated: 2026-10-15
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-15 | **用户主数据带头像**：`GET /api/open/users` 每个人新增 `avatar`（头像地址，可能为空），应用同步通讯录时可以把头像一起带过来，不用等本人登录。见 [用户主数据](/dev/users) |
 | 2026-10-15 | **应用版本号**：清单新增可选字段 `version`（建议 `x.y.z`，不写就取源码 `package.json` / `backend/package.json` 的 `version`），控制台「管理 → 应用」新增「版本」列：版本号、源码提交（Git 接入的应用）、最近一次发布时间。Python 模板的清单带上了 `version`。见 [应用部署规范](/dev/deploy) |
 | 2026-10-15 | **应用大模型：图片与向量**：`/api/open/llm/chat/completions` 支持 OpenAI 写法的图片输入（`image_url`，平台模型是 Anthropic 时自动转换），`/api/open/llm/*` 请求体上限放宽到 20MB；新增 `POST /api/open/llm/embeddings`（OpenAI 兼容，用「模型与 AI」里的向量模型，计入 AI 用量与配额）。JS / Python SDK 新增 `embed()`。见 [接入大模型](/dev/llm) |
 | 2026-10-14 | **老板应用与标准工具**：应用实现 `get_key_metrics` / `get_daily_summary` / `list_pending_decisions` 三个只读标准工具，就会出现在老板的每日经营简报、老板助理和管理层首页上；平台新增工具 `get_business_overview`（一次汇总所有应用）、定时 AI 任务（`create_daily_brief` / `create_scheduled_task`，只读、推到本人手机）。助手设定新增「全部只读工具」；应用可见范围新增「部门负责人」（`roles: ["LEADER"]`）。见 [让应用出现在老板的简报里](/dev/briefing) |
