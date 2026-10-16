@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.5.3 — 2026-10-15
+
+Patch release. The directory API (`GET /api/open/users`) includes each person's `avatar`, so apps can sync head icons with the rest of the profile instead of waiting for each person to sign in (FDE 0.3.1 does). No database changes.
+
 ## 0.5.2 — 2026-10-15
 
 Patch release. 管理 → 应用 gets a 版本 column: each hosted app's own version (new optional `version` in `yh-app.json`, falling back to the source `package.json` / `backend/package.json`), its source commit (Git-installed apps) and when it was last deployed. `yh` reports these as separate fields; `yh status` shows `v1.2.3 (sha)`. No database changes.
