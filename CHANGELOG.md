@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.5.2 — 2026-10-15
+
+Patch release. 管理 → 应用 gets a 版本 column: each hosted app's own version (new optional `version` in `yh-app.json`, falling back to the source `package.json` / `backend/package.json`), its source commit (Git-installed apps) and when it was last deployed. `yh` reports these as separate fields; `yh status` shows `v1.2.3 (sha)`. No database changes.
+
 ## 0.5.1 — 2026-10-15
 
 Patch release. Admins whose platform isn't fully onboarded are taken to the setup wizard when they open the home page (once per login, never after 完成开通); the home page 开始配置 card is retired and dropped from saved layouts. The open LLM API accepts image input (OpenAI `image_url`, converted for Anthropic models) and adds `POST /api/open/llm/embeddings`; the JS / Python SDKs gain `embed()`. No database changes.

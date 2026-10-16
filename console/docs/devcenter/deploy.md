@@ -3,7 +3,7 @@ title: 应用部署规范
 category: 入门
 order: 3
 summary: 应用要满足哪些条件，才能插到以虎 One 上一键部署、自动发布
-updated: 2026-10-16
+updated: 2026-10-15
 ---
 
 # 应用部署规范
