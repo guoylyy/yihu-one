@@ -59,6 +59,17 @@ const consent = ref(null)
 const agreeing = ref(false)
 const declining = ref(false)
 
+/**
+ * 应用页面上的 #/xxx（前端路由）不会发给服务端，但浏览器跟着 302 会带着它一路到这一页（登录页也会原样带回来）。
+ * 这里是用脚本跳回应用的，要手动接上，应用的回调再 302 时浏览器会继续带着，用户就回到原来那一页。
+ * 只给平台 SDK 的应用接（标准 OIDC 客户端带 response_type，不动它们的回跳地址）
+ */
+function keepHash(url) {
+  const h = route.hash
+  if (!h || h === '#' || route.query.response_type || String(url).includes('#')) return url
+  return url + h
+}
+
 // 标准 OAuth2 / OIDC 客户端（GitLab、Grafana 等）会带这些参数，原样交给后端；平台 SDK 不带
 const STANDARD_PARAMS = ['response_type', 'scope', 'nonce', 'code_challenge', 'code_challenge_method']
 function request(extra) {
@@ -73,7 +84,7 @@ async function go(agree = false) {
   try {
     const res = await ssoApi.authorize(request({ consent: agree || undefined }))
     if (!res?.redirect) throw new Error('授权失败：未返回跳转地址')
-    window.location.replace(res.redirect)
+    window.location.replace(keepHash(res.redirect))
   } catch (e) {
     consent.value = null
     error.value = e.message || '授权失败'
