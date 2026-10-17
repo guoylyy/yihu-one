@@ -36,7 +36,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 SESSION_COOKIE = "yh_sid"
 SESSION_TTL = 8 * 3600          # 本地会话 8 小时，过期后再走一次统一认证（用户无感）
@@ -177,6 +177,11 @@ class Workspace:
         if sid:
             with self._lock:
                 self._sessions.pop(sid, None)
+
+    def logout_url(self, headers=None) -> str:
+        """「退出 / 换账号」：清掉本应用的会话（logout）后 302 到这里——平台也退出登录，换个账号登录后回到本应用。"""
+        base = base_path_of(headers) or self.base_path
+        return f"{self.web_url}/logout" + (f"?redirect={quote(base + '/', safe='')}" if base else "")
 
     # ------------------------------------------------------------ MCP 身份
     def user_from_token(self, authorization: str | None) -> dict | None:

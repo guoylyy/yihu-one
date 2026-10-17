@@ -60,7 +60,14 @@ export function takeLoginRedirect() {
 
 /** redirect 只允许站内路径，防开放跳转 */
 export function safeRedirect(r) {
-  if (typeof r !== 'string' || !r.startsWith('/') || r.startsWith('//')) return '/'
-  if (r.startsWith('/login') || r.startsWith('/auth/')) return '/'
+  if (typeof r !== 'string' || !r.startsWith('/') || r.startsWith('//') || r.startsWith('/\\')) return '/'
+  if (r.startsWith('/login') || r.startsWith('/logout') || r.startsWith('/auth/')) return '/'
   return r
+}
+
+/** 应用的地址（/apps/<code>/…）不归控制台的路由管，要整页跳过去；其余在控制台里切换 */
+export const isAppPath = (r) => typeof r === 'string' && /^\/apps\/[a-z0-9-]+(\/|$|\?|#)/.test(r)
+export function goRedirect(router, r) {
+  if (isAppPath(r)) window.location.assign(r)
+  else router.replace(r)
 }

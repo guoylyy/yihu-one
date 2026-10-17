@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { installGuards } from './guards'
+import { useUserStore } from '@/stores/user'
+import { safeRedirect } from '@/utils/dingtalk'
 
 const MainLayout = () => import('@/layout/MainLayout.vue')
 
@@ -9,6 +11,18 @@ const routes = [
     name: 'Login',
     component: () => import('@/views/login/LoginView.vue'),
     meta: { public: true, title: '登录' }
+  },
+  {
+    // 退出平台登录再去登录页：应用的「退出 / 换账号」链接到这里（/logout?redirect=/apps/<code>/），
+    // 换个账号登录后回到 redirect。地址会被应用和 SDK 用到，不要改
+    path: '/logout',
+    name: 'Logout',
+    meta: { public: true },
+    redirect: to => {
+      useUserStore().logout()
+      const r = safeRedirect(to.query.redirect)
+      return { name: 'Login', query: r === '/' ? {} : { redirect: r } }
+    }
   },
   {
     // 首次初始化向导：还没有任何用户时由路由守卫跳到这里

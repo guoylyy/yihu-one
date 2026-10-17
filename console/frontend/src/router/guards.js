@@ -3,6 +3,7 @@ import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { onboardingApi } from '@/api/admin'
 import { getToken } from '@/utils/token'
+import { safeRedirect, isAppPath } from '@/utils/dingtalk'
 
 /** 未登录跳 /login?redirect=；按 meta.permission 拦截 admin */
 export function installGuards(router) {
@@ -34,7 +35,8 @@ export function installGuards(router) {
       if (to.name === 'Login' && user.isLoggedIn) {
         try {
           await user.ensureMe()
-          const r = typeof to.query.redirect === 'string' && to.query.redirect.startsWith('/') && !to.query.redirect.startsWith('//') ? to.query.redirect : '/'
+          const r = safeRedirect(to.query.redirect)
+          if (isAppPath(r)) { window.location.assign(r); return false }
           return r
         } catch {
           return true

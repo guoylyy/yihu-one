@@ -3,13 +3,14 @@ title: 变更记录
 category: 参考
 order: 61
 summary: 开发中心与接入接口的变化
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 # 变更记录
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-17 | **退出 / 换账号**：平台新增 `/logout?redirect=/apps/<code>/`——退出平台登录、到登录页，换个账号登录后直接回到应用（登录后的 redirect 现在可以是应用地址）。应用的 `/logout` 清掉自己的会话后 302 到这里；JS / Python SDK 新增 `ws.logoutUrl(req)` / `ws.logout_url(headers)`。见 [统一认证 · 会话建议](/dev/sso) |
 | 2026-10-15 | **文件存储**：平台接入七牛云对象存储，管理员在「管理 → 系统设置 → 文件存储」填 AccessKey / SecretKey / 空间 / 区域 / 下载域名并「测试连接」。应用用自己的凭证调 `/api/open/storage/*`：拿上传凭证直传七牛（大文件不经过平台、不进代码仓库）、拿下载地址（私有空间带签名）、查询 / 列举 / 删除；每个应用只能读写自己的目录。JS / Python SDK 新增 `storage`。见 [文件存储](/dev/storage) |
 | 2026-10-15 | **用户主数据带头像**：`GET /api/open/users` 每个人新增 `avatar`（头像地址，可能为空），应用同步通讯录时可以把头像一起带过来，不用等本人登录。见 [用户主数据](/dev/users) |
 | 2026-10-15 | **应用版本号**：清单新增可选字段 `version`（建议 `x.y.z`，不写就取源码 `package.json` / `backend/package.json` 的 `version`），控制台「管理 → 应用」新增「版本」列：版本号、源码提交（Git 接入的应用）、最近一次发布时间。Python 模板的清单带上了 `version`。见 [应用部署规范](/dev/deploy) |

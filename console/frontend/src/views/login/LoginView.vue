@@ -102,7 +102,7 @@ import { authApi } from '@/api/auth'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
-import { isDingTalk, requestInAppAuthCode, buildScanLoginUrl, saveLoginRedirect, safeRedirect } from '@/utils/dingtalk'
+import { isDingTalk, requestInAppAuthCode, buildScanLoginUrl, saveLoginRedirect, safeRedirect, goRedirect } from '@/utils/dingtalk'
 import { isFeishu, isWecom, feishuAuthUrl, wecomQrUrl, wecomInAppUrl, newState } from '@/utils/oauth'
 
 const route = useRoute()
@@ -197,7 +197,7 @@ async function finishLogin(res) {
   user.applyLogin(res)
   if (!res.user) await user.fetchMe()
   ElMessage.success(`欢迎，${user.me?.name || ''}`)
-  router.replace(redirect.value)
+  goRedirect(router, redirect.value)
 }
 
 async function passwordLogin() {

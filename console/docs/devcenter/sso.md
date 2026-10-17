@@ -3,7 +3,7 @@ title: 统一认证（SSO）
 category: 身份与认证
 order: 10
 summary: OAuth2 授权码模式：跳转授权页、code 换用户身份、会话建议
-updated: 2026-10-10
+updated: 2026-10-17
 ---
 
 # 统一认证（SSO）
@@ -102,7 +102,7 @@ access_token 有效期 2 小时。建立自己的会话后一般用不到它；*
 - 自己的会话 8 小时左右，过期就再走一次授权（用户无感，平台还在登录状态就是一闪而过）
 - Cookie 用 `HttpOnly; SameSite=Lax`
 - 接口（`/api/*`）未登录返回 401，页面收到 401 后刷新整页重新走授权，**不要在接口里 302**
-- 提供 `/logout` 清掉自己的会话即可；平台的登录状态不受影响
+- 提供 `/logout`：清掉自己的会话，再 302 到平台的 `{YH_WEB_URL}/logout?redirect=/apps/<code>/`——平台也退出登录、到登录页，换个账号登录后直接回到你的应用（测试不同角色、几个人共用一台电脑都靠它）。SDK：`res.redirect(302, ws.logoutUrl(req))` / `ws.logout_url(headers)`。只清自己会话、不跳平台的话，用户回来时平台还是登录状态，会原样再登进来
 
 ## 权限归谁管
 

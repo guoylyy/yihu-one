@@ -22,7 +22,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 import { authApi } from '@/api/auth'
 import { useUserStore } from '@/stores/user'
-import { takeLoginRedirect, safeRedirect } from '@/utils/dingtalk'
+import { takeLoginRedirect, safeRedirect, goRedirect } from '@/utils/dingtalk'
 import { callbackUrl } from '@/utils/oauth'
 
 // 钉钉 / 飞书 / 企业微信授权回来都落到这里：/auth/<平台>/callback?code&state
@@ -58,7 +58,7 @@ onMounted(async () => {
     const res = await LOGIN[provider](String(authCode))
     user.applyLogin(res)
     if (!res.user) await user.fetchMe()
-    router.replace(redirect.value)
+    goRedirect(router, redirect.value)
   } catch (e) {
     error.value = e.message || '登录失败'
   }

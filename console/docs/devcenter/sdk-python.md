@@ -3,7 +3,7 @@ title: Python SDK
 category: SDK 与示例
 order: 40
 summary: yh_one.py，标准库实现，一个文件搞定统一认证、使用数据、MCP 身份
-updated: 2026-09-28
+updated: 2026-10-17
 ---
 
 # Python SDK
@@ -25,7 +25,7 @@ user = ws.current_user(cookie_header)                  # 已登录的用户 dict
 prefix = base_path_of(request_headers)                 # 平台转发的路径前缀，如 "/apps/purchase"；直连时 ""
 url, set_cookie = ws.begin_login(cookie_header, "/", prefix)   # 未登录：302 到 url，带上 set_cookie（cookie 限定在 prefix 下）
 next_path = ws.finish_login(cookie_header, code, state)  # /sso/callback 里调用，失败抛 WorkspaceError
-ws.logout(cookie_header)
+ws.logout(cookie_header)                               # 清会话，再 302 到 ws.logout_url(request_headers)：平台也退出，换账号登录后回到本应用
 
 # 使用数据
 ws.track(user, "quote.compare", {"to": "北京市朝阳区", "weight": 5})

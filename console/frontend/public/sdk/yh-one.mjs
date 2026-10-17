@@ -125,6 +125,14 @@ export class Workspace {
   }
 
   logout(req) { this.sessions.delete(this.sid(req)) }
+  /**
+   * 「退出 / 换账号」：清掉本应用的会话后跳到这里——平台也退出登录，换个账号登录后回到本应用
+   *   app.get('/logout', (req, res) => { ws.logout(req); res.redirect(302, ws.logoutUrl(req)) })
+   */
+  logoutUrl(req) {
+    const base = basePathOf(req) || this.basePath
+    return `${this.webUrl}/logout${base ? `?redirect=${encodeURIComponent(base + '/')}` : ''}`
+  }
 
   /**
    * Express 中间件：挂上 /sso/callback，其余请求要求登录（未启用时直接放行）

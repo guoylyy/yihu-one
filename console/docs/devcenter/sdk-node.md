@@ -3,7 +3,7 @@ title: Node SDK
 category: SDK 与示例
 order: 41
 summary: yh-one.mjs，Node 18+ 零依赖，Express 中间件一行接入
-updated: 2026-09-28
+updated: 2026-10-17
 ---
 
 # Node SDK
@@ -41,6 +41,7 @@ app.get('/', (req, res) => {
 | `basePathOf(req)` | 平台转发的路径前缀，如 `/apps/purchase`；直连时 `''`。服务端自己拼跳转地址时用 |
 | `await ws.finishLogin(req, { code, state })` | 回调处理，返回登录后要去的路径 |
 | `ws.logout(req)` | 清会话 |
+| `ws.logoutUrl(req)` | 「退出 / 换账号」要跳的平台地址（平台也退出，换账号登录后回到本应用）：`app.get('/logout', (req, res) => { ws.logout(req); res.redirect(302, ws.logoutUrl(req)) })` |
 | `ws.track(user, action, detail)` | 上报使用数据 |
 | `await ws.userFromToken(authorization)` | MCP 调用的 Bearer token → 用户，无效 `null` |
 | `await ws.storage.put(key, buffer, { mime })` / `get(key)` / `url(key)` / `uploadToken({ key })` / `stat` / `list` / `remove` | 平台文件存储（七牛云），见 [文件存储](/dev/storage) |
