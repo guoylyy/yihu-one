@@ -270,6 +270,16 @@ class Workspace:
         conn.close()
         return data
 
+    def channel_token(self, provider: str) -> dict:
+        """平台「登录方式」里那个钉钉 / 飞书企业内部应用的 access_token（只给可信应用）：{provider, accessToken, expiresAt}。
+
+        拿去直接调钉钉 / 飞书开放接口（考勤、审批……），不用在应用里再配密钥。provider：dingtalk / feishu。
+        """
+        if not (self.client_id and self.client_secret):
+            raise WorkspaceError("缺少应用凭证（YH_CLIENT_ID/YH_CLIENT_SECRET）")
+        return self._call("GET", "/api/open/channel-token?" + urlencode({"provider": provider}),
+                          headers={"Authorization": self._basic()})
+
     def embed(self, opts: dict, timeout: int = 120):
         """文本向量（OpenAI /embeddings 兼容），用平台「模型与 AI」里配置的向量模型。
 

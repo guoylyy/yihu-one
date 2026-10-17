@@ -10,6 +10,7 @@ updated: 2026-10-17
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-17 | **用平台的钉钉 / 飞书凭证**：新增 `GET /api/open/channel-token?provider=dingtalk\|feishu`，可信应用拿平台「登录方式」里那个企业内部应用的 access_token 直接调钉钉 / 飞书开放接口（考勤、审批……），不用在应用里再配密钥。JS / Python SDK 新增 `ws.channelToken()` / `ws.channel_token()`。见 [应用信息与消息](/dev/notify) |
 | 2026-10-17 | **登录后回到原来那一页**：应用用 hash 路由（`#/xxx`）时，没登录打开某一页，统一认证后会回到这一页，不再落到首页（平台授权页跳回应用时接上 `#/xxx`；标准 OIDC 客户端不变）。应用这边不用改，前提是未登录跳授权、回调跳回都用 HTTP 302（SDK 就是）。见 [统一认证 · 会话建议](/dev/sso) |
 | 2026-10-17 | **退出 / 换账号**：平台新增 `/logout?redirect=/apps/<code>/`——退出平台登录、到登录页，换个账号登录后直接回到应用（登录后的 redirect 现在可以是应用地址）。应用的 `/logout` 清掉自己的会话后 302 到这里；JS / Python SDK 新增 `ws.logoutUrl(req)` / `ws.logout_url(headers)`。见 [统一认证 · 会话建议](/dev/sso) |
 | 2026-10-15 | **文件存储**：平台接入七牛云对象存储，管理员在「管理 → 系统设置 → 文件存储」填 AccessKey / SecretKey / 空间 / 区域 / 下载域名并「测试连接」。应用用自己的凭证调 `/api/open/storage/*`：拿上传凭证直传七牛（大文件不经过平台、不进代码仓库）、拿下载地址（私有空间带签名）、查询 / 列举 / 删除；每个应用只能读写自己的目录。JS / Python SDK 新增 `storage`。见 [文件存储](/dev/storage) |

@@ -1,6 +1,7 @@
 // 给应用的开放接口(应用凭证): 应用自身信息(所属空间、品牌)、给个人发消息
 //   GET  /api/open/app      应用插在哪个空间、平台(或空间)的名称 / LOGO / 主题, 应用据此跟随平台外观、限定空间
 //   POST /api/open/notify   经平台已配置的钉钉 / 飞书 / 企业微信给指定的人发消息(只有管理员安装或登记的可信应用能用)
+//   GET  /api/open/channel-token?provider=dingtalk|feishu  平台登录方式里那个钉钉 / 飞书应用的 access_token(只给可信应用)
 import prisma from '../lib/prisma.js'
 import { badRequest, forbidden } from '../lib/http.js'
 import { get as setting, publicConfig } from './settings.js'
@@ -8,6 +9,7 @@ import { spacesOfApp, spaceBrief, spaceBrand } from './spaces.js'
 import * as dingtalk from '../lib/dingtalk.js'
 import * as feishu from '../lib/feishu.js'
 import * as wecom from '../lib/wecom.js'
+import { audit } from '../lib/audit.js'
 
 const MAX_USERS = 100
 
@@ -63,6 +65,21 @@ export function normalizeNotify(body) {
   if (url && !/^https?:\/\/\S+$/.test(url)) throw badRequest('url 须为 http(s) 地址')
   const plain = markdown.replace(/[*_`#>]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
   return { userIds, msg: { title, markdown, plain, url: url || null } }
+}
+
+/**
+ * 平台登录方式里配的钉钉 / 飞书企业内部应用的 access_token，可信应用拿去直接调钉钉 / 飞书的开放接口（比如考勤），
+ * 不用在应用里再配一遍密钥（密钥不出平台，给的是 2 小时内有效的 token）。能调哪些接口看管理员给那个应用开了哪些权限。
+ * 企业微信每个系统应用（打卡、审批…）的 Secret 不一样，不在这里给
+ */
+const CHANNEL_TOKEN = { dingtalk: () => dingtalk.accessTokenInfo(), feishu: () => feishu.tenantTokenInfo() }
+export async function channelToken(app, provider) {
+  if (!app.trusted) throw forbidden('只有管理员安装或登记的应用能用平台的钉钉 / 飞书凭证')
+  const get = CHANNEL_TOKEN[String(provider || '')]
+  if (!get) throw badRequest('provider 只能是 dingtalk / feishu')
+  const { token, expiresAt } = await get()
+  audit({ user: null, via: 'APP' }, 'app.channel_token', { entityType: 'app', entityId: app.id, detail: { code: app.code, provider } })
+  return { provider, accessToken: token, expiresAt: expiresAt.toISOString() }
 }
 
 export async function notifyUsers(app, body) {

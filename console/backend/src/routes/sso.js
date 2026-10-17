@@ -90,6 +90,7 @@ openRouter.get('/users', wrap(req => masterUsers({ ...req.query, spaceIds: space
 openRouter.get('/app', wrap(req => openApp.appInfo(req.app_)))
 // 给个人发消息: 经平台配置的钉钉 / 飞书 / 企业微信(只有可信应用)
 openRouter.post('/notify', wrap(req => openApp.notifyUsers(req.app_, req.body || {})))
+openRouter.get('/channel-token', wrap(req => openApp.channelToken(req.app_, req.query.provider)))
 // 文件存储（七牛云）: 平台发上传凭证 / 下载地址, 文件不经过平台; 应用只能动自己的目录 apps/<code>/
 openRouter.get('/storage', wrap(req => storage.info(req.app_)))
 openRouter.post('/storage/upload-token', wrap(req => storage.uploadToken(req.app_, req.body || {})))

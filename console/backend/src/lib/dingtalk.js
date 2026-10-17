@@ -51,6 +51,14 @@ function throttle() {
 const THROTTLED = new Set([90018, 90002, 88])
 
 /** 调旧版 topapi(oapi), 统一处理 errcode; 触发限流时退避重试 */
+/** 给可信应用的 access_token（开放接口 /api/open/channel-token 用）：{ token, expiresAt } */
+export async function accessTokenInfo() {
+  const c = await conf()
+  if (!c.clientId || !c.clientSecret) throw new AppError(400, '钉钉未配置：请管理员在「管理 → 登录方式」填写钉钉应用的 Client ID 和 Client Secret', 5000)
+  const token = await appAccessToken()
+  return { token, expiresAt: new Date(cachedToken.expiresAt) }
+}
+
 async function topapi(path, body) {
   const token = await appAccessToken()
   for (let attempt = 0; ; attempt++) {

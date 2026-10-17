@@ -259,6 +259,17 @@ export class Workspace {
   }
 
   /**
+   * 平台「登录方式」里那个钉钉 / 飞书企业内部应用的 access_token（只给管理员安装或登记的可信应用）。
+   * 拿去直接调钉钉 / 飞书开放接口（考勤、审批……），不用在应用里再配密钥；能调哪些接口看管理员给那个应用开的权限
+   *   const { accessToken, expiresAt } = await ws.channelToken('dingtalk')   // 或 'feishu'（tenant_access_token）
+   * 有效期约 2 小时，到期前再取（平台有缓存，可以每次调用前都取）
+   */
+  async channelToken(provider) {
+    if (!this.clientId || !this.clientSecret) throw new WorkspaceError('缺少应用凭证（YH_CLIENT_ID / YH_CLIENT_SECRET）')
+    return this.call('GET', `/api/open/channel-token?provider=${encodeURIComponent(provider)}`, { headers: { Authorization: this.basic() } })
+  }
+
+  /**
    * 文件存储（管理员在「系统设置 → 文件存储」里配置）。key 都是相对本应用目录的路径，如 'courseware/B-05.pptx'
    *   storage.info()                                  → { enabled, private, maxUploadMB, root }
    *   storage.put(key, buffer, { mime, overwrite })   → { key, hash, size, mime }   服务端直接传（经平台签发的凭证直传七牛）

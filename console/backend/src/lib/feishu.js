@@ -92,6 +92,12 @@ export async function tenantToken(c) {
   return tenantTok.token
 }
 
+/** 给可信应用的 tenant_access_token（开放接口 /api/open/channel-token 用）：{ token, expiresAt } */
+export async function tenantTokenInfo() {
+  const token = await tenantToken()
+  return { token, expiresAt: new Date(tenantTok.exp) }
+}
+
 /** 递归拉取根部门(0)以下全部部门，返回 [{ deptId, name, parentId }] */
 export async function listAllDepartments(c) {
   c = c || await conf()
