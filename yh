@@ -186,6 +186,42 @@ platform_api() {
 }
 console_ok() { platform_api GET /api/platform/ping | grep -q '"ok":true'; }
 
+# 必须送到的平台调用（操作结果、应用移除 / 停用）：控制台回 {"code":0,…} 才算送到。
+# curl 不把 HTTP 500 当失败，控制台的数据库一时卡住（比如移除应用时 Docker 正在删镜像）结果就悄悄丢了：
+# 操作一直「执行中」、控制台还列着已经删掉的应用。所以这里看回包，重试约 30 秒；还不行就存进
+# backups/ops/unsent/，agent 每一轮先按顺序补发
+platform_send() { # platform_send <path> [正文文件]
+  if [ -n "${2:-}" ]; then platform_api POST "$1" -H 'Content-Type: text/plain; charset=utf-8' --data-binary "@$2"; else platform_api POST "$1"; fi
+}
+platform_must() { # platform_must <path> [正文文件]；送不到返回 1（已存下待补发）
+  local w
+  for w in 1 2 4 8 15; do
+    platform_send "$1" "${2:-}" | grep -q '"code":0' && return 0
+    sleep "$w"
+  done
+  platform_queue "$1" "${2:-}"
+  return 1
+}
+platform_queue() {
+  local dir="$ROOT/backups/ops/unsent" f
+  mkdir -p "$dir"
+  # 文件名 = 时间 + 序号：同一秒存的几条也按先后排，补发不乱序
+  f="$dir/$(date +%Y%m%d-%H%M%S)-$(printf '%05d' $(( $(ls "$dir" | grep -c '\.path$') + 1 )))"
+  [ -n "${2:-}" ] && cp "$2" "$f.body"
+  printf '%s\n' "$1" > "$f.path"
+}
+platform_flush() { # agent 每一轮先补发；有一条还送不到就停（保持顺序），下一轮再试
+  local dir="$ROOT/backups/ops/unsent" f p b
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.path; do
+    [ -f "$f" ] || continue
+    p="$(cat "$f")"; b="${f%.path}.body"; [ -f "$b" ] || b=""
+    platform_send "$p" "$b" | grep -q '"code":0' || return 0
+    rm -f "$f" "${f%.path}.body"
+    echo "[$(date '+%F %T')] 补发成功：$p"
+  done
+}
+
 # 额外隧道（yh.env 的 EXTRA_TUNNELS）：内网里不归平台管的独立服务，经同一条隧道直通一个自己的域名。
 # 和托管应用（容器跑在平台上、挂在 /apps/<code>/ 下）是两条不同的路：这里平台只管转发，不管登录、不管进程
 # 格式：<对外域名>=<frpc 容器里访问得到的地址>:<端口>，多条用英文逗号分隔，如 notes.example.com=host.docker.internal:3005
@@ -720,7 +756,7 @@ cmd_down() {
   [ -f "$APPS/$code/compose.yml" ] && docker compose -f "$APPS/$code/compose.yml" down >/dev/null 2>&1
   touch "$APPS/$code/.stopped"
   rm_app_routes "$code"; caddy_reload
-  platform_api POST "/api/platform/apps/$code/disable" >/dev/null
+  platform_must "/api/platform/apps/$code/disable" || red "  控制台暂时没更新（已存下，yh agent 会补发）"
   green "✅ $code 已停用（代码、数据、数据库都保留；yh up $code 恢复）"
 }
 
@@ -750,7 +786,7 @@ cmd_remove() {
   fi
   local t
   for t in $(docker images "yh-app-$code" --format '{{.Tag}}' 2>/dev/null); do docker rmi "yh-app-$code:$t" >/dev/null 2>&1; done
-  platform_api POST "/api/platform/apps/$code/remove" >/dev/null
+  platform_must "/api/platform/apps/$code/remove" || red "  控制台暂时没更新，还会列着 $code（已存下，yh agent 会补发）"
   green "✅ 已移除 ${code}。要恢复：把 ${dir#$ROOT/}/app 挪回 apps/$code$( [ -f "$dir/db.sql.gz" ] && echo "，yh restore $code ${dir#$ROOT/}/db.sql.gz" )，再 yh up $code"
 }
 
@@ -1377,8 +1413,8 @@ agent_ops() {
     mkdir -p "$ROOT/backups/ops"; log="$ROOT/backups/ops/$(date +%Y%m%d-%H%M%S)-$id-$kind-$code.log"
     echo "[$(date '+%F %T')] 操作 #$id $kind $code"
     ( run_op "$kind" "$code" "$params" ) 2>&1 | nocolor > "$log"; rc=${PIPESTATUS[0]}
-    platform_api POST "/api/platform/ops/$id/finish?ok=$([ "$rc" = 0 ] && echo true || echo false)" \
-      -H 'Content-Type: text/plain; charset=utf-8' --data-binary "@$log" >/dev/null || red "  交回结果失败（控制台不可用？）"
+    platform_must "/api/platform/ops/$id/finish?ok=$([ "$rc" = 0 ] && echo true || echo false)" "$log" \
+      || { red "  交回结果失败（控制台不可用？），已存下，控制台恢复后自动补发"; return 0; }
     echo "[$(date '+%F %T')] 操作 #$id $([ "$rc" = 0 ] && echo 成功 || echo 失败)"
     report_status
     find "$ROOT/backups/ops" -name '*.log' -mtime +30 -delete 2>/dev/null
@@ -1403,6 +1439,7 @@ cmd_agent() {
     # 主循环自己不持锁：锁上是自己的 pid，说明是某个子 shell 被强杀后留下的
     [ "$(cat "$ROOT/.deploy.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$ROOT/.deploy.lock"
     if console_ok; then
+      platform_flush
       agent_ops
       if [ $((now - last_report)) -ge 30 ]; then report_status; report_platform; last_report="$now"; fi
     fi
