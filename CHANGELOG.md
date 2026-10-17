@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.6.2 — 2026-10-17
+
+Patch release. Single sign-on keeps the app's hash route: opening an app page such as `/apps/hr/#/people` while signed out now returns to that page after login instead of the app's home page (the authorize page carries the fragment back to SDK apps; standard OIDC clients are unchanged). No app changes needed. No database changes.
+
 ## 0.6.1 — 2026-10-17
 
 Patch release. Apps can sign people out of the platform: the console's new `/logout?redirect=/apps/<code>/` clears the platform login and shows the login page, and after signing in (any method) the person lands back in the app, so accounts can be switched (e.g. to test a staff role). SDKs gain `ws.logoutUrl(req)` / `ws.logout_url(headers)`. No database changes.
