@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.6.3 — 2026-10-17
+
+Patch release. The agent no longer loses operation results: if the console's database stalls when the agent reports back (e.g. while Docker deletes a removed app's images), the result used to be dropped silently, leaving the console on 「正在移除 …」 and the removed app still listed. `yh agent` now waits for the console's confirmation, retries for ~30 s, and otherwise queues the call and replays it in order once the console is back (op results, app remove / disable). No database changes.
+
 ## 0.6.2 — 2026-10-17
 
 Patch release. Single sign-on keeps the app's hash route: opening an app page such as `/apps/hr/#/people` while signed out now returns to that page after login instead of the app's home page (the authorize page carries the fragment back to SDK apps; standard OIDC clients are unchanged). No app changes needed. No database changes.
