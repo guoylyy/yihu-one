@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.6.1 — 2026-10-17
+
+Patch release. Apps can sign people out of the platform: the console's new `/logout?redirect=/apps/<code>/` clears the platform login and shows the login page, and after signing in (any method) the person lands back in the app, so accounts can be switched (e.g. to test a staff role). SDKs gain `ws.logoutUrl(req)` / `ws.logout_url(headers)`. No database changes.
+
 ## 0.6.0 — 2026-10-15
 
 Minor release: platform file storage backed by Qiniu Kodo. Admins configure it in 系统设置 → 文件存储 and run a step-by-step connection test; apps use `/api/open/storage/*` (upload tokens for direct uploads, signed download URLs, stat / list / delete, each app confined to its own folder) and the new `ws.storage` helpers in the JS and Python SDKs. Off by default. No database changes.
