@@ -217,7 +217,7 @@ IN_CHECKOUT=""
 
 # 装到哪：试用和 --git 原地装；正式安装默认 ~/yihu-one；Docker 安装是挂进来的平台目录
 if [ -n "$DOCKER" ]; then
-  [ -z "$DEST" ] || [ "${DEST%/}" = "$YH_DIR" ] || err "Docker 安装的目录就是挂进来的 $YH_DIR，不用 --dir：换目录就改 -v 的路径"
+  [ -z "$DEST" ] || [ "${DEST%/}" = "$YH_DIR" ] || err "Docker 安装的目录就是挂进来的 ${YH_DIR}，不用 --dir：换目录就改 -v 的路径"
   DEST="$YH_DIR"
 elif [ -z "$DEST" ]; then
   if [ -n "$IN_CHECKOUT" ] && { [ "$MODE" = "test" ] || [ -n "$GIT" ]; }; then DEST="$SELF_DIR"
@@ -238,12 +238,12 @@ case "$([ -n "$DOCKER" ] && echo Docker || uname -s)" in
   Linux)  OS="Linux"; docker_how="curl -fsSL https://get.docker.com | sh（国内加 -s -- --mirror Aliyun）"; pkg="apt install -y（或 yum install -y）";;
   *) err "不支持的系统（仅支持 macOS / Linux）";;
 esac
-for c in curl git jq openssl rsync tar; do command -v "$c" >/dev/null 2>&1 || err "缺少 $c：$pkg $c"; done
+for c in curl git jq openssl rsync tar; do command -v "$c" >/dev/null 2>&1 || err "缺少 ${c}：$pkg $c"; done
 command -v docker >/dev/null 2>&1 || err "缺少 Docker：$docker_how"
 docker info >/dev/null 2>&1 || err "Docker 没在运行（macOS：colima start；Linux：sudo systemctl start docker；当前用户没权限时：sudo usermod -aG docker \$USER 后重新登录）"
 docker compose version >/dev/null 2>&1 || err "缺少 docker compose 插件（Linux：apt install docker-compose-plugin）"
 if [ -n "$DOCKER" ]; then ok "Docker 安装（宿主机 $(docker info --format '{{.OperatingSystem}}' 2>/dev/null)），平台目录 $DEST"
-else ok "$OS，依赖齐全"; fi
+else ok "${OS}，依赖齐全"; fi
 
 # Docker 能用的 CPU / 内存（macOS 上是 Colima 虚拟机的，不是整机的）
 ncpu="$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)"
@@ -283,12 +283,12 @@ port_busy() { # 有别的程序（不是我们自己的 Caddy）在监听这个�
 }
 if [ "$MODE" = "production" ] && [ -n "$INTRANET" ]; then
   if docker ps --format '{{.Names}}' | grep -q '^yh-caddy$'; then :
-  elif [ -n "$DOCKER" ]; then ok "端口 $PORT（Docker 里看不到宿主机的端口占用：被占了的话启动时会报错，换 --port）"
+  elif [ -n "$DOCKER" ]; then ok "端口 ${PORT}（Docker 里看不到宿主机的端口占用：被占了的话启动时会报错，换 --port）"
   elif port_busy "$PORT"; then err "端口 $PORT 已经被别的程序占用，换一个：--port 8080"
   else ok "端口 $PORT 空闲"; fi
   if [ "$OS" = "Linux" ]; then
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then warn "防火墙 ufw 开着：放行端口 $PORT（sudo ufw allow $PORT/tcp），内网其他电脑才能打开"
-    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then warn "防火墙 firewalld 开着：放行端口 $PORT（sudo firewall-cmd --permanent --add-port=$PORT/tcp && sudo firewall-cmd --reload）"; fi
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then warn "防火墙 ufw 开着：放行端口 ${PORT}（sudo ufw allow $PORT/tcp），内网其他电脑才能打开"
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then warn "防火墙 firewalld 开着：放行端口 ${PORT}（sudo firewall-cmd --permanent --add-port=$PORT/tcp && sudo firewall-cmd --reload）"; fi
   fi
 fi
 if [ "$MODE" = "production" ]; then
@@ -296,7 +296,7 @@ if [ "$MODE" = "production" ]; then
     if echo "$h" | grep -qE '^[0-9.]+$'; then ok "用 IP 访问：$h"; continue; fi
     ip="$(resolve "$h")"
     if [ -z "$ip" ]; then warn "域名 $h 还没解析（或这台机器查不到），装完后对外访问前要先解析"
-    elif [ -n "$FRP" ] && echo "$FRP" | grep -qE '^[0-9.]+$' && [ "$ip" != "$FRP" ]; then warn "域名 $h 解析到 $ip，不是云服务器 $FRP"
+    elif [ -n "$FRP" ] && echo "$FRP" | grep -qE '^[0-9.]+$' && [ "$ip" != "$FRP" ]; then warn "域名 $h 解析到 ${ip}，不是云服务器 $FRP"
     else ok "域名 $h → $ip"; fi
   done
   [ -n "$APPS_URL" ] || warn "没配应用独立域名（--apps-url）：代码应用和控制台同源，应用页面里的脚本能读到用户的控制台登录凭证。生产强烈建议配"
@@ -311,7 +311,7 @@ else
   echo "  公司：  $COMPANY"
   echo "  控制台：$URL"
   echo "  应用：  ${APPS_URL:-（和控制台同一个域名）}"
-  if [ -n "$INTRANET" ]; then echo "  入口：  只在内网用，本机监听 0.0.0.0:$PORT（不对外、不配隧道；钉钉 / 飞书 / 企业微信登录用不了，用账号密码）"
+  if [ -n "$INTRANET" ]; then echo "  入口：  只在内网用，本机监听 0.0.0.0:${PORT}（不对外、不配隧道；钉钉 / 飞书 / 企业微信登录用不了，用账号密码）"
   else echo "  入口：  $([ -n "$FRP" ] && echo "经云服务器 $FRP 的隧道" || echo "自己在前面配反向代理到本机 127.0.0.1:18080")"; fi
   [ -z "$DOCKER" ] || echo "  方式：  Docker 安装（常驻 agent 是容器 yh-agent）"
   if [ -n "$GIT" ]; then up="Git 原地安装，自动跟踪 release 分支"
@@ -366,7 +366,7 @@ fetch_from_manifest() {
   fetch_package "$u" "$(echo "$j" | jq -r '.sha256 // empty')" "$(echo "$j" | jq -r '.sig // empty')"
 }
 if [ -f "$DEST/yh" ]; then
-  ok "使用已有的平台文件：$DEST（重复执行只补齐配置，不会动数据）"
+  ok "使用已有的平台文件：${DEST}（重复执行只补齐配置，不会动数据）"
 elif [ -n "$SRC" ]; then
   case "$SRC" in
     *.json) fetch_from_manifest "$SRC" || err "取不到更新清单：$SRC";;
@@ -377,9 +377,9 @@ elif [ -n "$IN_CHECKOUT" ] && [ -d "$SELF_DIR/.git" ]; then
   [ -z "$(git -C "$SELF_DIR" status --porcelain 2>/dev/null)" ] || warn "Git 检出里有没提交的改动：只会装已提交的版本（$(git -C "$SELF_DIR" rev-parse --short HEAD)）"
   mkdir -p "$DEST"
   git -C "$SELF_DIR" archive --format=tar HEAD | tar -xf - -C "$DEST" || err "导出失败"
-  ok "已从 Git 检出导出 $(tr -d '[:space:]' < "$DEST/VERSION") 版到 $DEST（更新包方式，不跟踪分支）"
+  ok "已从 Git 检出导出 $(tr -d '[:space:]' < "$DEST/VERSION") 版到 ${DEST}（更新包方式，不跟踪分支）"
 else
-  info "  下载最新版本（$DEFAULT_LATEST）"
+  info "  下载最新版本（${DEFAULT_LATEST}）"
   fetch_from_manifest "$DEFAULT_LATEST" || err "取不到发布页的更新清单。拿到更新包后用 --src <包> 安装，或者 git clone 后在仓库里执行 ./install.sh"
   ok "已下载 $(tr -d '[:space:]' < "$DEST/VERSION") 版到 $DEST"
 fi
@@ -453,7 +453,7 @@ if [ -n "$DEMO" ]; then
     code="${d%%|*}"; rest="${d#*|}"; tpl="${rest%%|*}"; name="${rest#*|}"
     if [ -d "apps/$code" ]; then ok "$code 已存在"; continue; fi
     if ( ./yh new "$code" --from "$tpl" --name "$name" >/dev/null && ./yh up "$code" ) > "backups/install-$code.log" 2>&1; then
-      ok "$name：$(grep -oE 'https?://[^ ]+/apps/'"$code"'/' "backups/install-$code.log" | tail -1)"
+      ok "${name}：$(grep -oE 'https?://[^ ]+/apps/'"$code"'/' "backups/install-$code.log" | tail -1)"
     else warn "$name 没装上，日志 backups/install-$code.log"; fi
   done
 else
@@ -478,17 +478,17 @@ if [ "$MODE" = "production" ]; then
 | 项 | 值 |
 | --- | --- |
 | 公司 | $COMPANY |
-| 版本 | $VERSION（$CHANNEL） |
-| 平台机器 | $([ -n "$DOCKER" ] && echo "Docker 宿主机（$(docker info --format '{{.Name}}' 2>/dev/null)），平台目录 \`$DEST\`（宿主机上同一路径），镜像 \`${YH_INSTALL_CMD##* }\`" || echo "$(hostname)（$OS），目录 \`$DEST\`") |
+| 版本 | ${VERSION}（${CHANNEL}） |
+| 平台机器 | $([ -n "$DOCKER" ] && echo "Docker 宿主机（$(docker info --format '{{.Name}}' 2>/dev/null)），平台目录 \`$DEST\`（宿主机上同一路径），镜像 \`${YH_INSTALL_CMD##* }\`" || echo "$(hostname)（${OS}），目录 \`$DEST\`") |
 | 控制台 | $URL |
 | 应用域名 | ${APPS_URL:-未配置（生产建议配：yh.env 的 APPS_URL）} |
-| 对外入口 | $(if [ -n "$INTRANET" ]; then echo "只在内网用：本机 0.0.0.0:$PORT"; elif [ -n "$FRP" ]; then echo "云服务器 $FRP（frp 隧道）"; else echo "前置反向代理 → 本机 127.0.0.1:18080"; fi) |
+| 对外入口 | $(if [ -n "$INTRANET" ]; then echo "只在内网用：本机 0.0.0.0:$PORT"; elif [ -n "$FRP" ]; then echo "云服务器 ${FRP}（frp 隧道）"; else echo "前置反向代理 → 本机 127.0.0.1:18080"; fi) |
 | 升级方式 | $([ -d .git ] && echo "Git 原地，自动跟踪 \`$(envv PLATFORM_BRANCH)\` 分支" || echo "更新包：控制台「管理 → 概览」点升级，或 \`$YH upgrade\` / \`$YH upgrade --package <包>\`") |
 | 开机自启 / agent | $([ -n "$AUTO_OK" ] && { [ -n "$DOCKER" ] && echo "已安装（容器 yh-agent）" || echo 已安装; } || echo "**未安装**：执行 \`$([ "$OS" = Linux ] && echo 'sudo ')$YH_ONCE autostart\`") |
 
 ## 部署检查清单
 
-$(if [ -n "$INTRANET" ]; then echo "- [ ] 内网另一台电脑打开 $URL 能看到登录页（打不开：防火墙放行端口 $PORT）"; else echo "- [ ] DNS：\`$(host_of "$URL")\`${APPS_URL:+、\`$(host_of "$APPS_URL")\`} 解析到 $([ -n "$FRP" ] && echo "云服务器 $FRP" || echo "前置反代")"; fi)
+$(if [ -n "$INTRANET" ]; then echo "- [ ] 内网另一台电脑打开 $URL 能看到登录页（打不开：防火墙放行端口 ${PORT}）"; else echo "- [ ] DNS：\`$(host_of "$URL")\`${APPS_URL:+、\`$(host_of "$APPS_URL")\`} 解析到 $([ -n "$FRP" ] && echo "云服务器 $FRP" || echo "前置反代")"; fi)
 $([ -n "$FRP" ] && printf '%s\n' "- [ ] 云服务器：安全组放行 TCP 7000、80、443；把本目录的 \`cloud/\` 拷过去执行 \`$CLOUD_CMD\`" "- [ ] 隧道：平台机器上 \`$YH doctor\` 的「隧道已连上云端」「公网访问」都通过")
 - [ ] 打开 $URL 完成初始化（管理员账号、平台名称），登录后跟着**开通向导**走完：公司信息、外观、大模型（测试通过）、登录方式（测试连接通过）、人员、消息通知（「发一条给我」收到）、应用
 - [ ] 开通向导最后一步「下载开通报告」，和本交付单一起留档
@@ -516,7 +516,7 @@ if [ "$MODE" = "test" ]; then
 else
   [ "$WARNINGS" -gt 0 ] && printf '\033[33m   上面有 %s 条提醒，交付前处理掉\033[0m\n' "$WARNINGS"
   if [ -n "$INTRANET" ]; then
-    echo "   内网里的电脑都能打开 $URL（打不开先查防火墙是否放行端口 $PORT）"
+    echo "   内网里的电脑都能打开 ${URL}（打不开先查防火墙是否放行端口 ${PORT}）"
   elif [ -n "$FRP" ]; then
     echo "   下一步：云服务器上执行（cloud/ 目录拷过去；令牌只在这里和 yh.env 里，别发群）："
     echo "     DOMAIN=$(host_of "$URL")${APPS_URL:+ APPS_DOMAIN=$(host_of "$APPS_URL")} FRP_TOKEN=$(envv FRP_TOKEN) INSTALL_DEPS=1 ./cloud/install.sh"

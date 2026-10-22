@@ -411,7 +411,7 @@ HINT="别的空间的王五不该看到"; check "资料：按空间收敛" sh -c
 
 title "14. 版本号与 VI：所有人能看到版本，每个空间可以有自己的 VI"
 PV="$(tr -d '[:space:]' < "$DIR/VERSION")"
-HINT="/api/me 的 platform.version 应等于 VERSION（$PV）"; check "版本：普通员工能看到平台版本" sh -c "curl -s $B/api/me -H 'Authorization: Bearer $T_ZS' | jq -e '.data.platform.version == \"$PV\" and (.data.platform.channel | test(\"beta|stable\"))'"
+HINT="/api/me 的 platform.version 应等于 VERSION（${PV}）"; check "版本：普通员工能看到平台版本" sh -c "curl -s $B/api/me -H 'Authorization: Bearer $T_ZS' | jq -e '.data.platform.version == \"$PV\" and (.data.platform.channel | test(\"beta|stable\"))'"
 HINT="默认应是以虎 VI"; check "VI：默认以虎科技 VI" sh -c "curl -s $B/api/auth/config | jq -e '.data.theme.preset == \"yihu\" and .data.theme.tokens.highlight == \"#d2521e\"'"
 api PUT "/api/admin/spaces/$SP2" -d '{"brand":{"name":"兄弟工作台","theme":{"preset":"classic","tokens":{"primary":"#0f766e"}}}}' >/dev/null
 HINT="兄弟公司空间的王五应拿到空间 VI，张三（默认空间）跟随平台"; check "VI：空间自己的 VI 只给空间里的人" sh -c "curl -s $B/api/me -H 'Authorization: Bearer $T_WW' | jq -e '.data.brand.name == \"兄弟工作台\" and .data.brand.theme.tokens.primary == \"#0f766e\"' && curl -s $B/api/me -H 'Authorization: Bearer $T_ZS' | jq -e '.data.brand == null'"

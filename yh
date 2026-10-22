@@ -786,7 +786,7 @@ cmd_remove() {
   fi
   local t
   for t in $(docker images "yh-app-$code" --format '{{.Tag}}' 2>/dev/null); do docker rmi "yh-app-$code:$t" >/dev/null 2>&1; done
-  platform_must "/api/platform/apps/$code/remove" || red "  控制台暂时没更新，还会列着 $code（已存下，yh agent 会补发）"
+  platform_must "/api/platform/apps/$code/remove" || red "  控制台暂时没更新，还会列着 ${code}（已存下，yh agent 会补发）"
   green "✅ 已移除 ${code}。要恢复：把 ${dir#$ROOT/}/app 挪回 apps/$code$( [ -f "$dir/db.sql.gz" ] && echo "，yh restore $code ${dir#$ROOT/}/db.sql.gz" )，再 yh up $code"
 }
 

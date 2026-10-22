@@ -114,7 +114,7 @@ myip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || curl -fsS --
 for h in "$DOMAIN" ${APPS_DOMAIN:+"$APPS_DOMAIN"}; do
   ip="$(getent hosts "$h" 2>/dev/null | awk '{print $1; exit}')"
   if [ -z "$ip" ]; then echo "  ⚠️ $h 还没解析：解析到 ${myip:-这台服务器的公网 IP} 后 Caddy 会自动签证书"
-  elif [ -n "$myip" ] && [ "$ip" != "$myip" ]; then echo "  ⚠️ $h 解析到 $ip，这台服务器是 $myip"
+  elif [ -n "$myip" ] && [ "$ip" != "$myip" ]; then echo "  ⚠️ $h 解析到 ${ip}，这台服务器是 $myip"
   else echo "  ✓ $h → $ip"; fi
 done
 echo "✅ 云端就绪。别忘了：安全组放行 TCP 7000（隧道）和 80/443（HTTPS 证书与访问）"

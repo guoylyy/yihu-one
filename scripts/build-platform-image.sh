@@ -37,13 +37,13 @@ fi
 (cd "$STAGE" && : > .yh-files && find . -type f | sed 's#^\./##' | LC_ALL=C sort > ../files.$$ && mv ../files.$$ .yh-files)
 
 if [ -n "$PUSH" ]; then
-  step "构建并推送 $PUSH:$VERSION（amd64 + arm64）"
+  step "构建并推送 $PUSH:${VERSION}（amd64 + arm64）"
   docker buildx build --platform linux/amd64,linux/arm64 -f "$STAGE/docker/Dockerfile" --build-arg VERSION="$VERSION" \
     -t "$PUSH:$VERSION" -t "$PUSH:latest" --push "$STAGE" || die "构建失败"
 else
   step "构建 yihu-one:$VERSION"
   docker build -f "$STAGE/docker/Dockerfile" --build-arg VERSION="$VERSION" -t "yihu-one:$VERSION" "$STAGE" || die "构建失败"
   echo
-  echo "✅ 镜像 yihu-one:$VERSION。试装（本机没有别的平台时）："
+  echo "✅ 镜像 yihu-one:${VERSION}。试装（本机没有别的平台时）："
   echo "   docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v \$HOME/yihu-one-docker:\$HOME/yihu-one-docker yihu-one:$VERSION --test --demo"
 fi
