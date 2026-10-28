@@ -20,7 +20,7 @@ export const SCHEMA = {
     page: 'settings',
     fields: {
       workspaceName: { label: '平台名称', type: 'text', default: '以虎 One', help: '登录页、浏览器标题、侧边栏显示' },
-      workspaceSubtitle: { label: '平台英文名', type: 'text', default: 'YIHU ONE', help: '侧边栏平台名称下面那行小字，留空则不显示' },
+      workspaceSubtitle: { label: '平台英文名', type: 'text', default: 'YIHU ONE', allowEmpty: true, help: '侧边栏平台名称下面那行小字，留空则不显示' },
       logo: { label: 'LOGO', type: 'image', default: '', help: '侧边栏、登录页、授权页、开发中心和浏览器标签页图标都用它；建议正方形 PNG / SVG，不超过 200KB。不设置用「外观与主题」里预设自带的 LOGO（以虎科技 VI 是以虎标志），预设没有 LOGO 时显示平台名称的第一个字' },
       companyName: { label: '组织名称', type: 'text', default: '', help: 'AI 助手的系统提示里会用到' },
       publicBaseUrl: { label: '访问地址', type: 'url', env: 'PUBLIC_URL', default: 'http://localhost:18080', help: '用户浏览器里打开的地址；钉钉回调、应用地址都基于它。yh init 时已写好，换域名后同步修改' },
@@ -183,7 +183,9 @@ export async function get(group) {
   const out = {}
   for (const [k, def] of Object.entries(g.fields)) {
     const stored = def.type === 'password' ? secrets[k] : saved[k]
-    out[k] = stored !== undefined && stored !== null && stored !== '' ? stored : (fromEnv(def) ?? def.default)
+    // 显式存了空串也算「已设置」：allowEmpty 的项（如平台英文名）留空就是「不显示」，不能回落到默认值
+    const hasStored = stored !== undefined && stored !== null && (stored !== '' || def.allowEmpty)
+    out[k] = hasStored ? stored : (fromEnv(def) ?? def.default)
   }
   return out
 }
@@ -206,7 +208,8 @@ export async function listForAdmin(ctx, page) {
       key, label: g.label, page: g.page, updatedAt: row?.updatedAt || null,
       fields: Object.entries(g.fields).filter(([, def]) => !def.hidden).map(([k, def]) => {
         const stored = def.type === 'password' ? secrets[k] : saved[k]
-        const source = stored !== undefined && stored !== null && stored !== '' ? 'db' : fromEnv(def) !== undefined ? 'env' : 'default'
+        const hasStored = stored !== undefined && stored !== null && (stored !== '' || def.allowEmpty)
+        const source = hasStored ? 'db' : fromEnv(def) !== undefined ? 'env' : 'default'
         return {
           key: k, label: def.label, type: def.type, help: def.help || null, env: def.env || null,
           min: def.min, max: def.max,
