@@ -13,6 +13,7 @@ import * as usage from '../services/usage.js'
 import * as settings from '../services/settings.js'
 import * as notifySvc from '../services/notify.js'
 import { sealKey, openKey, complete, embed } from '../agent/llm.js'
+import { listUpstreamModels } from '../services/llm.js'
 import * as spaces from '../services/spaces.js'
 import * as onboarding from '../services/onboarding.js'
 import * as storage from '../services/objectStorage.js'
@@ -181,6 +182,21 @@ router.post('/llm-configs/:id/test', wrap(async (req) => {
   } catch (e) {
     return { ok: false, message: e.message.slice(0, 300), ms: Date.now() - started }
   }
+}))
+
+// 读厂商的模型清单：开通向导和「模型与 AI」用它填下拉，模型名就不用写死在代码里
+// body: { provider?, baseUrl?, apiKey?, id? } —— 编辑已有模型时只传 id，用数据库里存着的密钥去读
+router.post('/llm/models', wrap(async (req) => {
+  const b = req.body || {}
+  const provider = b.provider || 'OPENAI_COMPAT'
+  let { apiKey, baseUrl } = b
+  if (!apiKey && b.id) {
+    const row = await prisma.llmConfig.findFirst({ where: { id: Number(b.id), deletedAt: null } })
+    if (!row) throw notFound('模型不存在')
+    apiKey = openKey(row.apiKey)
+    baseUrl = baseUrl || row.baseUrl
+  }
+  return { models: await listUpstreamModels({ provider, baseUrl, apiKey }) }
 }))
 
 // ---------- 系统设置 ----------

@@ -36,9 +36,13 @@
           </el-form-item>
           <div class="row2">
             <el-form-item label="模型">
-              <el-select v-model="form.model" filterable allow-create default-first-option style="width: 100%" placeholder="模型名">
-                <el-option v-for="m in vendor?.models || []" :key="m" :label="m" :value="m" />
-              </el-select>
+              <div class="model-pick">
+                <el-select v-model="form.model" filterable allow-create default-first-option style="width: 100%" placeholder="模型名">
+                  <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
+                </el-select>
+                <el-button v-if="canFetchModels" :loading="fetching" @click="fetchModels">拉取可用模型</el-button>
+              </div>
+              <div v-if="canFetchModels" class="f-help">列表可能已过时：厂商上新模型后点「拉取可用模型」，也可以直接输入模型名。</div>
             </el-form-item>
             <el-form-item label="显示名称">
               <el-input v-model="form.name" placeholder="员工在 AI 助手里看到的名字" />
@@ -76,6 +80,28 @@ const adding = ref(false)
 const tests = reactive({})
 const form = reactive({ vendor: '', apiKey: '', model: '', name: '', baseUrl: '', withEmbedding: true })
 const vendor = computed(() => CHOICES.find(v => v.id === form.vendor))
+// 从厂商接口读到的模型名（按厂商缓存），和 VENDORS 里的建议值合并成下拉：厂商上新模型后不用改代码
+const fetchedModels = reactive({})
+const fetching = ref(false)
+const modelOptions = computed(() => [...new Set([...(fetchedModels[form.vendor] || []), ...(vendor.value?.models || [])])])
+// 本机 Ollama 的 localhost 在控制台容器里指向容器自己，读不到；Claude 走 Anthropic 协议，也没有这个接口
+const canFetchModels = computed(() => !!form.vendor && (vendor.value?.provider || 'OPENAI_COMPAT') === 'OPENAI_COMPAT' && !['custom', 'ollama'].includes(form.vendor))
+
+async function fetchModels() {
+  if (!form.apiKey.trim()) return ElMessage.warning('先填 API Key，再用它读取模型列表')
+  fetching.value = true
+  try {
+    const r = await adminApi.fetchLlmModels({ provider: 'OPENAI_COMPAT', baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim() })
+    const models = r.models || []
+    fetchedModels[form.vendor] = models
+    if (!form.model && models.length) form.model = models[0]
+    ElMessage.success(`读取到 ${models.length} 个模型`)
+  } catch (e) {
+    ElMessage.warning(e.message || '读取失败，直接输入模型名即可')
+  } finally {
+    fetching.value = false
+  }
+}
 
 function pick(id) {
   const v = CHOICES.find(x => x.id === id)
@@ -130,6 +156,7 @@ onMounted(load)
 <style scoped>
 @import '../onboarding.css';
 .model-row { display: flex; align-items: center; gap: 12px; }
+.model-pick { display: flex; align-items: center; gap: 8px; width: 100%; }
 .ml { margin-left: 6px; }
 .small { font-size: 12px; }
 .ok { color: var(--yh-success); }

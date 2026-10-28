@@ -106,19 +106,23 @@
           <el-input v-model="dlg.form.baseUrl" :placeholder="isOpenhex ? '留空使用 OpenHex 默认地址' : 'https://api.deepseek.com'" class="mono-input" />
         </el-form-item>
         <el-form-item :label="isOpenhex ? 'Agent ID' : '模型'" prop="model">
-          <el-select
-            v-if="modelOptions.length"
-            v-model="dlg.form.model"
-            filterable
-            allow-create
-            default-first-option
-            placeholder="选择常用模型，或直接输入模型名 / 接入点"
-            class="mono-input"
-            style="width: 100%"
-          >
-            <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
-          </el-select>
-          <el-input v-else v-model="dlg.form.model" :placeholder="isOpenhex ? 'OpenHex 智能体 ID' : '如 qwen-plus、deepseek-chat'" class="mono-input" />
+          <div class="model-pick">
+            <el-select
+              v-if="modelOptions.length"
+              v-model="dlg.form.model"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="选择常用模型，或直接输入模型名 / 接入点"
+              class="mono-input"
+              style="width: 100%"
+            >
+              <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
+            </el-select>
+            <el-input v-else v-model="dlg.form.model" :placeholder="isOpenhex ? 'OpenHex 智能体 ID' : '如 qwen-plus、deepseek-flash'" class="mono-input" />
+            <el-button v-if="canFetchModels" :loading="fetchingModels" @click="fetchModels">拉取可用模型</el-button>
+          </div>
+          <div v-if="canFetchModels" class="f-help">列表可能已过时：点「拉取可用模型」从厂商接口读当前能用的，也可以直接输入模型名。</div>
         </el-form-item>
         <el-form-item :label="isOpenhex ? 'OpenHex API Key' : 'API Key'" :prop="dlg.id ? undefined : 'apiKey'">
           <el-input
@@ -184,11 +188,34 @@ const isOpenhex = computed(() => dlg.form.provider === 'OPENHEX')
 const isEmbedding = computed(() => dlg.form.kind === 'EMBEDDING')
 const defaultName = computed(() => list.value.find(m => m.isDefault)?.name || '未设置')
 const vendorOf = () => VENDORS.find(v => v.id === dlg.form.vendor)
+// 从厂商接口读到的模型名（按厂商缓存）：和 VENDORS 里的建议值合并，厂商上新模型后不用改代码
+const fetchedModels = reactive({})
+const fetchingModels = ref(false)
 const modelOptions = computed(() => {
   if (dlg.form.provider !== 'OPENAI_COMPAT') return []
   const v = vendorOf()
-  return (isEmbedding.value ? v?.embModels : v?.models) || []
+  const base = (isEmbedding.value ? v?.embModels : v?.models) || []
+  return [...new Set([...(fetchedModels[dlg.form.vendor] || []), ...base])]
 })
+const canFetchModels = computed(() => dlg.form.provider === 'OPENAI_COMPAT' && !!dlg.form.baseUrl)
+
+async function fetchModels() {
+  const apiKey = (dlg.form.apiKey || '').trim()
+  if (!apiKey && !dlg.id) return ElMessage.warning('先填 API Key，再用它读取模型列表')
+  fetchingModels.value = true
+  try {
+    // 编辑已有模型时 apiKey 是空的（界面只显示掩码），交给后端用存着的密钥
+    const r = await adminApi.fetchLlmModels({ provider: 'OPENAI_COMPAT', baseUrl: (dlg.form.baseUrl || '').trim(), apiKey: apiKey || undefined, id: dlg.id || undefined })
+    const models = r.models || []
+    fetchedModels[dlg.form.vendor] = models
+    if (!dlg.form.model && models.length) dlg.form.model = models[0]
+    ElMessage.success(`读取到 ${models.length} 个模型`)
+  } catch (e) {
+    ElMessage.warning(e.message || '读取失败，直接输入模型名即可')
+  } finally {
+    fetchingModels.value = false
+  }
+}
 
 // 换厂商：自动填地址；模型和名称只在「空着或本来就是建议值」时才替换，不覆盖手填内容
 function onVendor(id) {
@@ -227,6 +254,7 @@ async function load() {
 
 function openEdit(row) {
   const extra = row?.extra && typeof row.extra === 'object' ? { ...row.extra } : {}
+  for (const k of Object.keys(fetchedModels)) delete fetchedModels[k] // 换一条配置就丢掉上一条读到的模型
   const mcpConnector = extra.mcpConnector || ''
   delete extra.mcpConnector
   dlg.id = row?.id || null
@@ -324,6 +352,8 @@ onMounted(load)
 
 <style scoped>
 .mb { margin-bottom: 14px; }
+.model-pick { display: flex; align-items: center; gap: 8px; width: 100%; }
+.f-help { font-size: 12px; color: var(--yh-text-3); margin-top: 4px; line-height: 1.5; }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .toolbar .el-tag { height: auto; min-height: 24px; white-space: normal; line-height: 1.5; padding: 2px 8px; }
 .small { font-size: 12px; }

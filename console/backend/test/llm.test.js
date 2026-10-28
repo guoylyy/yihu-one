@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 process.env.JWT_SECRET ||= 'test-secret-at-least-16-chars'
 process.env.DATABASE_URL ||= 'mysql://u:p@127.0.0.1:1/none'
 
-const { estimateTokens, resolveUser, toModelList, normalizeEmbedInput } = await import('../src/services/llm.js')
+const { estimateTokens, resolveUser, toModelList, normalizeEmbedInput, listUpstreamModels } = await import('../src/services/llm.js')
 const { toAnthropicMessages } = await import('../src/agent/llm.js')
 const { SCHEMA } = await import('../src/services/settings.js')
 
@@ -92,4 +92,34 @@ test('normalizeEmbedInput：字符串转数组，空串 / 超长 / 太多条报 
   assert.throws(() => normalizeEmbedInput([1]), e => e.status === 400)
   assert.throws(() => normalizeEmbedInput('x'.repeat(8193)), e => e.status === 400)
   assert.throws(() => normalizeEmbedInput(Array(65).fill('a')), e => e.status === 400)
+})
+
+test('listUpstreamModels：读厂商 /models 去重，参数不全 / 对端报错时给出可读原因', async () => {
+  const orig = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), auth: init.headers?.Authorization })
+    return new Response(JSON.stringify({ object: 'list', data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }, { id: 'deepseek-flash' }] }), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    })
+  }
+  try {
+    // 末尾斜杠要去掉，否则会拼成 //models
+    const models = await listUpstreamModels({ baseUrl: 'https://api.deepseek.com/', apiKey: 'sk-x' })
+    assert.deepEqual(models, ['deepseek-flash', 'deepseek-v4-pro'])
+    assert.equal(calls[0].url, 'https://api.deepseek.com/models')
+    assert.equal(calls[0].auth, 'Bearer sk-x')
+  } finally {
+    globalThis.fetch = orig
+  }
+
+  await assert.rejects(() => listUpstreamModels({ provider: 'ANTHROPIC', apiKey: 'x' }), /只有 OpenAI 兼容/)
+  await assert.rejects(() => listUpstreamModels({ baseUrl: 'https://api.deepseek.com' }), /先填 API Key/)
+
+  globalThis.fetch = async () => new Response('{"error":"bad key"}', { status: 401 })
+  try {
+    await assert.rejects(() => listUpstreamModels({ baseUrl: 'https://api.deepseek.com', apiKey: 'k' }), /厂商接口返回 401/)
+  } finally {
+    globalThis.fetch = orig
+  }
 })

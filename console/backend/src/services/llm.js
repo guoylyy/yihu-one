@@ -310,3 +310,34 @@ export async function embeddings(app, body, { ip, userToken } = {}) {
     usage: { prompt_tokens: prompt, total_tokens: prompt }
   }
 }
+
+/**
+ * 读厂商的模型清单（OpenAI 兼容 GET /models），给「模型与 AI」和开通向导的下拉用。
+ * 前端 VENDORS 里的模型名会过时（厂商上新模型、旧模型退役），这里按填好的 Base URL + Key 现读一次，
+ * 管理员点「拉取可用模型」就能看到当前真的能用的那些。只返回模型名，不返回密钥和上游地址。
+ * 对端不提供 /models 或参数不全时抛 badRequest，由界面提示「直接填模型名」兜底。
+ */
+export async function listUpstreamModels({ provider = 'OPENAI_COMPAT', baseUrl, apiKey } = {}) {
+  if (provider !== 'OPENAI_COMPAT') throw badRequest('只有 OpenAI 兼容接口能读取模型列表；Anthropic / OpenHex 请直接填写模型名')
+  if (!apiKey) throw badRequest('先填 API Key 再读取模型列表')
+  const base = (baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/, '')
+  let resp
+  try {
+    resp = await fetch(`${base}/models`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15_000)
+    })
+  } catch (e) {
+    throw badRequest(`连不上厂商接口：${e.message}`)
+  }
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => '')
+    throw badRequest(`厂商接口返回 ${resp.status}：${t.slice(0, 200)}`)
+  }
+  const data = await resp.json().catch(() => null)
+  // OpenAI / 通义 / DeepSeek 都是 { data: [{ id }] }，少数厂商用 { models: [...] }
+  const raw = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : []
+  const models = [...new Set(raw.map(m => (typeof m === 'string' ? m : m?.id)).filter(Boolean))]
+  if (!models.length) throw badRequest('厂商没有返回模型列表，请直接填写模型名')
+  return models
+}

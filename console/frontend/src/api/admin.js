@@ -18,6 +18,7 @@ export const adminApi = {
   updateLlm: (id, data) => put(`/admin/llm-configs/${id}`, data),
   removeLlm: id => del(`/admin/llm-configs/${id}`),
   testLlm: id => post(`/admin/llm-configs/${id}/test`, null, { timeout: 90000 }),
+  fetchLlmModels: data => post('/admin/llm/models', data, { timeout: 30000 }),
 
   audit: params => get('/admin/audit', params)
 }
