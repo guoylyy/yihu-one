@@ -7,7 +7,7 @@ process.env.JWT_SECRET ||= 'test-secret-at-least-16-chars'
 process.env.DATABASE_URL ||= 'mysql://u:p@127.0.0.1:1/none'
 
 const { estimateTokens, resolveUser, toModelList, normalizeEmbedInput } = await import('../src/services/llm.js')
-const { toAnthropicMessages } = await import('../src/agent/llm.js')
+const { toAnthropicMessages, complete } = await import('../src/agent/llm.js')
 const { SCHEMA } = await import('../src/services/settings.js')
 
 const fakeApp = { id: 7, code: 'cli_demo' }
@@ -82,6 +82,47 @@ test('toAnthropicMessages：纯文本消息不变，连续同角色合并', () =
   const out = toAnthropicMessages([{ role: 'user', content: '你好' }, { role: 'user', content: [{ type: 'text', text: '再问' }] }])
   assert.equal(out.length, 1)
   assert.deepEqual(out[0].content, [{ type: 'text', text: '你好' }, { type: 'text', text: '再问' }])
+})
+
+const sse = (chunks) => new Response(chunks.map(c => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n', { status: 200 })
+
+test('complete：模型不支持强制调工具（DeepSeek 思考模式 400）时退回 auto 重试，并带回 reasoning_content', async () => {
+  const bodies = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body))
+    if (bodies.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'Thinking mode does not support this tool_choice', type: 'invalid_request_error' } }), { status: 400 })
+    }
+    return sse([
+      { choices: [{ delta: { reasoning_content: '先查' } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'list_users', arguments: '{}' } }] } }] }
+    ])
+  }
+  try {
+    const cfg = { provider: 'OPENAI_COMPAT', baseUrl: 'http://llm.test/v1', model: 'deepseek-v4-pro', apiKey: 'k' }
+    const tools = [{ type: 'function', function: { name: 'list_users', parameters: { type: 'object' } } }]
+    const r = await complete(cfg, { system: 's', messages: [{ role: 'user', content: '有几个人' }], tools, requireTool: true })
+    assert.deepEqual(bodies.map(b => b.tool_choice), ['required', 'auto'])
+    assert.equal(r.reasoning, '先查')
+    assert.equal(r.toolCalls[0].name, 'list_users')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('complete：别的 400 不重试，原样报错', async () => {
+  let calls = 0
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => { calls++; return new Response('{"error":{"message":"bad key"}}', { status: 400 }) }
+  try {
+    const cfg = { provider: 'OPENAI_COMPAT', baseUrl: 'http://llm.test/v1', model: 'm', apiKey: 'k' }
+    const tools = [{ type: 'function', function: { name: 't', parameters: { type: 'object' } } }]
+    await assert.rejects(complete(cfg, { system: 's', messages: [], tools, requireTool: true }), /400: .*bad key/)
+    assert.equal(calls, 1)
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
 
 test('normalizeEmbedInput：字符串转数组，空串 / 超长 / 太多条报 400', () => {

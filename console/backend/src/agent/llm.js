@@ -115,7 +115,8 @@ export async function getLlmConfig({ modelId, user, selectableOnly = false } = {
 /**
  * 一轮模型调用(流式)。onText(delta) 实时回调文字增量
  * params: 每次调用的采样参数(temperature/top_p/frequency_penalty/presence_penalty/stop/maxTokens)
- * 返回 { content, toolCalls: [{ id, name, arguments(string) }], usage: { promptTokens, completionTokens } }
+ * 返回 { content, toolCalls: [{ id, name, arguments(string) }], usage: { promptTokens, completionTokens }, reasoning }
+ * reasoning 只有 OpenAI 兼容的思考模式模型才有；带工具调用的那一轮要原样回传（见 runner 的 loadHistory）
  */
 export async function complete(cfg, { system, messages, tools, onText, signal, requireTool = false, params = {} }) {
   if (cfg.provider === 'ANTHROPIC') return completeAnthropic(cfg, { system, messages, tools, onText, signal, requireTool, params })
@@ -137,17 +138,23 @@ async function completeOpenAi(cfg, { system, messages, tools, onText, signal, re
     ...extra,
     ...(tools?.length ? { tools, tool_choice: requireTool ? 'required' : 'auto' } : {})
   }
-  const resp = await fetch(`${base}/chat/completions`, {
+  const post = () => fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
     body: JSON.stringify(body),
     signal
   })
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => '')
-    throw new Error(`大模型接口返回 ${resp.status}: ${t.slice(0, 300)}`)
+  let resp = await post()
+  let errText = resp.ok ? '' : await resp.text().catch(() => '')
+  // 有的模型不支持强制调工具（如 DeepSeek 思考模式：Thinking mode does not support this tool_choice），退回 auto 再试一次
+  if (!resp.ok && resp.status === 400 && body.tool_choice === 'required' && /tool_choice/i.test(errText)) {
+    body.tool_choice = 'auto'
+    resp = await post()
+    errText = resp.ok ? '' : await resp.text().catch(() => '')
   }
+  if (!resp.ok) throw new Error(`大模型接口返回 ${resp.status}: ${errText.slice(0, 300)}`)
   let content = ''
+  let reasoning = '' // 思考模式的推理内容（DeepSeek 等的 reasoning_content），不展示给用户
   let usage = null
   const calls = [] // index -> { id, name, arguments }
   const decoder = new TextDecoder()
@@ -166,6 +173,7 @@ async function completeOpenAi(cfg, { system, messages, tools, onText, signal, re
       if (j.usage) usage = { promptTokens: j.usage.prompt_tokens || 0, completionTokens: j.usage.completion_tokens || 0 }
       const delta = j.choices?.[0]?.delta
       if (!delta) continue
+      if (delta.reasoning_content) reasoning += delta.reasoning_content
       if (delta.content) {
         content += delta.content
         onText?.(delta.content)
@@ -182,7 +190,8 @@ async function completeOpenAi(cfg, { system, messages, tools, onText, signal, re
   return {
     content,
     toolCalls: calls.filter(Boolean).map((c, i) => ({ ...c, id: c.id || `call_${Date.now()}_${i}` })),
-    usage
+    usage,
+    reasoning
   }
 }
 

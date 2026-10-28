@@ -99,7 +99,7 @@ function systemPrompt(ctx, context, { companyName, workspaceName, extraPrompt, a
 }
 
 /** DB 消息 → 模型消息(OpenAI 格式), 取最近若干条且从 user 消息开始, 保证 tool_calls 与结果成对 */
-async function loadHistory(conversationId) {
+async function loadHistory(conversationId, modelId) {
   const rows = await prisma.agentMessage.findMany({
     where: { conversationId },
     orderBy: { id: 'desc' },
@@ -111,7 +111,13 @@ async function loadHistory(conversationId) {
   for (const r of start >= 0 ? rows.slice(start) : []) {
     const c = r.content
     if (r.role === 'user') msgs.push({ role: 'user', content: c.text })
-    else if (r.role === 'assistant') msgs.push({ role: 'assistant', content: c.content || '', ...(c.tool_calls?.length ? { tool_calls: c.tool_calls } : {}) })
+    else if (r.role === 'assistant') {
+      // DeepSeek 思考模式：工具调用那几轮的 reasoning_content 必须回传，不然接口报 400；不带工具的轮次不传
+      // 只回传给产生它的那个模型（中途换了模型就不带）
+      const reasoning = c.reasoning_content && c.reasoningModelId === modelId ? { reasoning_content: c.reasoning_content } : {}
+      const calls = c.tool_calls?.length ? { tool_calls: c.tool_calls, ...reasoning } : {}
+      msgs.push({ role: 'assistant', content: c.content || '', ...calls })
+    }
     else if (r.role === 'tool') msgs.push({ role: 'tool', tool_call_id: c.tool_call_id, content: c.content })
     else if (r.role === 'event' && c.resultMessage) {
       msgs.push({ role: 'user', content: `[系统记录] 用户已在确认卡片上${c.status === 'CONFIRMED' ? '确认执行' : '处理'}：${c.summary}。结果：${c.resultMessage}` })
@@ -190,7 +196,7 @@ export async function chat(ctx, { message, conversationId, context, modelId, app
   })
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const history = await loadHistory(conv.id)
+    const history = await loadHistory(conv.id, cfg.id)
     // 每轮第一步强制先调工具: 弱一些的模型在用户要「一句话」时会跳过查询直接编答案(线上实测 qwen-plus)
     // 可在模型配置 extra.requireTool=false 关闭
     const r = await complete(cfg, {
@@ -199,7 +205,7 @@ export async function chat(ctx, { message, conversationId, context, modelId, app
       onText: (delta) => emit({ type: 'text', delta })
     })
     const toolCalls = r.toolCalls.map(tc => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments || '{}' } }))
-    await save(conv.id, 'assistant', { content: r.content, tool_calls: toolCalls })
+    await save(conv.id, 'assistant', { content: r.content, tool_calls: toolCalls, ...(r.reasoning && toolCalls.length ? { reasoning_content: r.reasoning, reasoningModelId: cfg.id } : {}) })
     if (!toolCalls.length) break
 
     for (const tc of toolCalls) {
