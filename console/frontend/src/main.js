@@ -10,8 +10,10 @@ import { useUserStore } from './stores/user'
 import '@fontsource-variable/manrope'
 import './styles/main.css'
 import { restoreTheme } from './utils/theme'
+import { applyCachedTitle } from './utils/brandCache'
 
 restoreTheme()
+applyCachedTitle()
 
 const app = createApp(App)
 const pinia = createPinia()

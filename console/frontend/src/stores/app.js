@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { authApi } from '@/api/auth'
 import { setupApi } from '@/api/setup'
 import { applyTheme } from '@/utils/theme'
+import { readBrandCache, writeBrandCache } from '@/utils/brandCache'
 
 // 公开的平台配置（/api/auth/config）：名称、组织、功能开关。后台「系统设置」改了立即生效
 /** 浏览器标签页图标跟随 LOGO；没设置 LOGO 时用主题自带的图标，再没有用默认图标 */
@@ -20,15 +21,21 @@ function applyFavicon(logo) {
 export const useAppStore = defineStore('app', {
   state: () => ({
     config: null,
+    // 上次的品牌名：配置回来之前先用它，避免首屏闪「以虎 One」
+    cachedBrand: readBrandCache(),
     // 所在空间自己的 VI（/api/me 的 brand）；null = 跟随平台
     brand: null,
     loading: null,
     needsSetup: null // null=未知 / true=待初始化 / false=已初始化
   }),
   getters: {
-    workspaceName: s => s.brand?.name || s.config?.workspaceName || '以虎 One',
+    workspaceName: s => s.brand?.name || s.config?.workspaceName || s.cachedBrand?.name || '以虎 One',
     // 英文名：设置过（哪怕是空串）就用设置的值，空串表示不显示
-    workspaceSubtitle: s => (s.config && 'workspaceSubtitle' in s.config ? s.config.workspaceSubtitle || '' : 'YIHU ONE'),
+    workspaceSubtitle: s => {
+      if (s.config && 'workspaceSubtitle' in s.config) return s.config.workspaceSubtitle || ''
+      if (s.cachedBrand) return s.cachedBrand.subtitle || ''
+      return 'YIHU ONE'
+    },
     /** 生效的主题：空间的 > 平台的（后端 services/theme.js 的 resolve） */
     theme: s => s.brand?.theme || s.config?.theme || null,
     /** 上传的 LOGO（空间的 > 平台的）；都没有用主题预设自带的 */
@@ -51,6 +58,7 @@ export const useAppStore = defineStore('app', {
         .config()
         .then(c => {
           this.config = c || {}
+          writeBrandCache(this.workspaceName, this.workspaceSubtitle)
           this.applyLook()
           return this.config
         })

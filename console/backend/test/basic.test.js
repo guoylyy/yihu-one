@@ -74,9 +74,12 @@ test('设置定义完整', () => {
     for (const [k, f] of Object.entries(g.fields)) {
       assert.ok(f.label && f.type, `${key}.${k} 缺 label / type`)
       assert.ok('default' in f, `${key}.${k} 缺 default`)
+      if (f.allowEmpty) assert.equal(f.type, 'text', `${key}.${k}：只有文本项能 allowEmpty`)
     }
   }
   assert.equal(SCHEMA.login.fields.password.default, true, '默认必须能用密码登录，否则首次部署进不去')
+  // 帮助文案写的是「留空则不显示」，所以必须允许显式空串，否则会回落到默认值 YIHU ONE
+  assert.equal(SCHEMA.general.fields.workspaceSubtitle.allowEmpty, true)
 })
 
 test('工具注册表能转成 function calling 格式', () => {
