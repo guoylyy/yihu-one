@@ -132,17 +132,17 @@ GET <平台地址>/api/open/llm/models
 
 ```json
 { "object": "list", "data": [
-  { "id": "deepseek-chat", "object": "model", "owned_by": "yihu-one", "name": "DeepSeek", "description": null, "default": true }
+  { "id": "deepseek-flash", "object": "model", "owned_by": "yihu-one", "name": "DeepSeek", "description": null, "default": true }
 ] }
 ```
 
 ## 指定模型
 
-不传 `model` 时用平台默认模型。要指定时，`model` 填「管理 → 模型与 AI」里该模型的**模型名**（即调上游用的名称，如 `deepseek-chat`）：
+不传 `model` 时用平台默认模型。要指定时，`model` 填「管理 → 模型与 AI」里该模型的**模型名**（即调上游用的名称，如 `deepseek-flash`）：
 
 ```js
 await openai.chat.completions.create({
-  model: 'deepseek-chat',
+  model: 'deepseek-flash',
   messages: [...]
 })
 ```
