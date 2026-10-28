@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## Unreleased
+
+Apps must carry a version: `yh-app.json` now requires a `version` field (semantic versioning, e.g. `1.0.0`), updated with every release. `yh add` and console installs refuse a manifest without one; existing apps keep deploying, with a reminder to add the field. The Node template ships with `0.1.0`, and the market detail page shows each hosted app's version. No database changes.
+
 ## 0.6.4 — 2026-10-17
 
 Patch release. Trusted apps (admin-installed or admin-registered) can get a short-lived access token for the DingTalk / Feishu app configured in 登录方式 (`GET /api/open/channel-token?provider=dingtalk|feishu`, SDK `ws.channelToken()`), so apps calling DingTalk / Feishu open APIs, such as HR attendance, no longer need the secrets configured again. Issuance is audited; untrusted apps get 403. No database changes.

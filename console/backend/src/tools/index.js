@@ -110,7 +110,7 @@ export const TOOLS = [
       '把用户本地的项目发布到平台（新建，或填 appId 给已有应用出新版本）。按项目选 kind：',
       'LITE 轻应用 = 单个 HTML 文件的小工具（跑在沙箱里不能联网；存数据、调 AI、调只读工具用 window.yh，见平台 /dev/lite），html 传完整文件；',
       'EXTERNAL 外部应用 = 已经部署在别处的系统，传 url（要统一登录再传 redirectUris，提供 AI 工具再传 mcpUrl）；',
-      'HOSTED 代码应用 = 有 Dockerfile 和 yh-app.json 的服务，传已推送的 git 仓库地址，code 必须和 yh-app.json 一致，只有开发者能发、每次都要管理员审核。',
+      'HOSTED 代码应用 = 有 Dockerfile 和 yh-app.json 的服务，传已推送的 git 仓库地址，code 必须和 yh-app.json 一致、yh-app.json 要带 version（语义化版本，如 1.0.0），只有开发者能发、每次都要管理员审核。',
       '名称、简介、图标用户没说时，先根据项目给 2～3 个建议请用户选，不要自己定；EXTERNAL / HOSTED 的 code 先用 check_app_code 查。',
       '发布前必须问用户发给谁：PRIVATE 仅自己、SHARED 指定同事或部门（userIds / deptIds，用 search_users / list_departments 查）、MARKET 上架全公司（要审核）。',
       '发布后把返回的 url 和 result 告诉用户；代码应用用 publish_status 跟进安装进度。'

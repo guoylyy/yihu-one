@@ -48,6 +48,8 @@ export async function registerApp(b) {
     managed: true, source: b.source || null, branch: b.branch || null, status: 'ACTIVE', deletedAt: null
   }
   const existing = await prisma.app.findUnique({ where: { code: b.code } })
+  // 应用接入规范 3.1：新接入的应用必须带版本号（缺失不能装）；存量应用不强制，更新时 yh 会提醒补上
+  if (!existing && !String(b.version || '').trim()) throw badRequest('yh-app.json 缺少 version 字段（应用接入规范：必须带明确版本号，如 1.0.0）')
   // 管理员 / 创建者在控制台换过图标的，清单里的图标只记下来（「恢复为代码里的图标」用），不覆盖显示的图标
   if (existing?.iconCustom) { delete data.icon; delete data.iconColor }
   let secret = null

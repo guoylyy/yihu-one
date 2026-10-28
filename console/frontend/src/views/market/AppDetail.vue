@@ -16,6 +16,7 @@
             <span v-if="app.rating" class="stars">★ {{ app.rating }} <span class="yh-muted">（{{ app.ratingCount }} 人评分）</span></span>
             <span>{{ app.installs }} 人在用</span>
             <span v-if="app.category">{{ app.category }}</span>
+            <span v-if="app.version">v{{ app.version }}</span>
             <el-tag v-for="t in app.tags" :key="t" size="small" effect="plain" round>{{ t }}</el-tag>
           </div>
         </div>

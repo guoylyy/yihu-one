@@ -568,6 +568,7 @@ cmd_add() {
   if [ -z "$m" ]; then why="代码里没有 yh-app.json（应用清单，模板见 templates/node/yh-app.json）"
   elif ! jq empty "$m" 2>/dev/null; then why="yh-app.json 不是合法 JSON"
   elif [ "$(mf "$m" .code)" != "$code" ]; then why="清单里的 code（$(mf "$m" .code)）和这次填的 $code 不一致"
+  elif [ -z "$(mf "$m" .version)" ]; then why="yh-app.json 缺少 version 字段（应用接入规范：必须带明确版本号，如 1.0.0）"
   elif [ ! -f "$APPS/$code/src/Dockerfile" ] && [ -z "$(mf "$m" .image)" ]; then why="代码里没有 Dockerfile"
   fi
   if [ -n "$why" ]; then rm -rf "$APPS/$code"; die "$why"; fi
@@ -616,6 +617,7 @@ cmd_up() {
 
   docker ps --format '{{.Names}}' | grep -q '^yh-console$' || cmd_start_platform
   step "上线 ${name}（${code}）→ $url/"
+  [ -n "$(mf "$m" .version)" ] || gray "  清单缺少 version 字段（应用接入规范：必须带明确版本号，如 1.0.0），下次发版补上"
 
   # 1. 数据库
   if [ "$dbwanted" = "true" ]; then
@@ -648,7 +650,7 @@ cmd_up() {
   body="$(jq -n --argjson m "$(cat "$m")" --arg url "$url$entry" --arg cb "$url$callback" --argjson mcp "$mcpurl" --argjson reset "$reset" \
     --arg src "$src" --arg branch "$branch" --arg icondata "$icondata" \
     '{code:$m.code, name:$m.name, icon:(if $icondata == "" then $m.icon else $icondata end), iconColor:$m.iconColor, category:$m.category, description:$m.description,
-      url:$url, redirectUris:[$cb], mcpUrl:$mcp, visibility:$m.visibility, isDefault:($m.isDefault // false),
+      url:$url, redirectUris:[$cb], mcpUrl:$mcp, version:($m.version // null), visibility:$m.visibility, isDefault:($m.isDefault // false),
       source:$src, branch:(if $branch == "" then null else $branch end), resetSecret:$reset}')"
   resp="$(platform_api POST /api/platform/apps/register -H 'Content-Type: application/json' -d "$body")"
   [ "$(echo "$resp" | jq -r .code 2>/dev/null)" = "0" ] || die "登记失败：$resp"

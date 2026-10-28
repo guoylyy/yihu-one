@@ -43,6 +43,7 @@ CMD ["node", "server.js"]
   "icon": "🛒",
   "category": "业务",
   "description": "采购申请、比价、到货跟踪",
+  "version": "1.0.0",
   "port": 3000,
   "health": "/health",
   "callback": "/sso/callback",
@@ -60,7 +61,7 @@ CMD ["node", "server.js"]
 | --- | --- |
 | `code` | 决定地址、容器名、数据库名，**定了不要改**。小写字母开头，只含小写字母、数字、短横线 |
 | `name` / `icon` / `category` / `description` | 工作台上显示。每次发布都以清单为准 |
-| `version` | 可选，应用自己的版本号（建议 `x.y.z`），显示在控制台「管理 → 应用」的「版本」列。不写就取源码 `package.json`（或 `backend/package.json`）的 `version`；发新版记得改它 |
+| `version` | **必填**，应用自己的版本号（语义化版本，如 `1.0.0`），每次发版同步更新；安装时校验，缺失装不上。显示在控制台「管理 → 应用」的「版本」列。存量应用没写的尽快补上（没写时显示会退回取源码 `package.json` / `backend/package.json` 的 `version`） |
 | `iconColor` | 可选，图标配色，`#RRGGBB`（如 `"#10b981"`）。不写就按名称自动配一个底色 |
 | `port` | 容器里监听的端口 |
 | `health` | 健康检查路径，默认 `/health` |

@@ -73,7 +73,7 @@ export async function detail(ctx, id) {
   const live = versions.find(v => v.id === app.liveVersionId)
   return {
     ...cardDto(app, s.get(app.id), !!mineInstall, bm),
-    intro: app.intro, screenshots: app.screenshots || [],
+    intro: app.intro, screenshots: app.screenshots || [], version: app.runtime?.version || null,
     usable: !!openUrlOf(app) && app.status === 'ACTIVE' && (app.kind === 'EXTERNAL' || app.kind === 'HOSTED' ? !!app.url : !!app.liveVersionId),
     isPublisher: app.publisherId === ctx.user.id,
     permissions: describePermissions(app, live),

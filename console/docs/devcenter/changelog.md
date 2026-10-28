@@ -10,6 +10,7 @@ updated: 2026-10-28
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-28 | **应用必须带版本号**：清单 `yh-app.json` 的 `version`（语义化版本，如 `1.0.0`）由可选改为**必填**——安装（`yh add` / 控制台）时校验，缺失装不上，存量应用更新时会提醒补上；Node 模板的清单带上了 `version`；应用市场详情页显示版本号。见 [应用部署规范](/dev/deploy) |
 | 2026-10-28 | **DeepSeek 预设模型更新**：「管理 → 模型与 AI」和开通向导里选 DeepSeek 时，建议模型改为 `deepseek-flash`（默认，DeepSeek-V4.1-Flash）/ `deepseek-v4-pro`，同时保留旧名 `deepseek-v4-flash`（等同 `deepseek-flash`），去掉已于 2026-07-24 停用的 `deepseek-chat` / `deepseek-reasoner`（继续用旧名调用会报错，已配置的模型请把模型名改掉）。见 [接入大模型](/dev/llm) |
 | 2026-10-17 | **用平台的钉钉 / 飞书凭证**：新增 `GET /api/open/channel-token?provider=dingtalk\|feishu`，可信应用拿平台「登录方式」里那个企业内部应用的 access_token 直接调钉钉 / 飞书开放接口（考勤、审批……），不用在应用里再配密钥。JS / Python SDK 新增 `ws.channelToken()` / `ws.channel_token()`。见 [应用信息与消息](/dev/notify) |
 | 2026-10-17 | **登录后回到原来那一页**：应用用 hash 路由（`#/xxx`）时，没登录打开某一页，统一认证后会回到这一页，不再落到首页（平台授权页跳回应用时接上 `#/xxx`；标准 OIDC 客户端不变）。应用这边不用改，前提是未登录跳授权、回调跳回都用 HTTP 302（SDK 就是）。见 [统一认证 · 会话建议](/dev/sso) |
