@@ -53,18 +53,45 @@ const bodyEl = ref(null)
 const activeId = ref('')
 
 const slug = computed(() => route.params.slug || 'index')
-const doc = computed(() => getDoc(slug.value))
+
+// 开发中心的文档是打包好的 Markdown，产品名写死在里面；换了自己的平台名称就按平台名称显示。
+// 代码块里的示例保持不变（那是给读者照抄的样例值），只换正文、标题和目录。
+const brandName = computed(() => appCfg.workspaceName)
+function brandText(s) {
+  const name = brandName.value
+  return name && name !== '以虎 One' ? String(s ?? '').replaceAll('以虎 One', name) : s
+}
+function brandHtml(html) {
+  const name = brandName.value
+  if (!name || name === '以虎 One') return html
+  return html.split(/(<pre[\s\S]*?<\/pre>)/g).map((part, i) => (i % 2 ? part : part.replaceAll('以虎 One', name))).join('')
+}
+
+const doc = computed(() => {
+  const d = getDoc(slug.value)
+  return d && { ...d, title: brandText(d.title), summary: brandText(d.summary) }
+})
 
 // 正文第一行的 # 标题与 frontmatter title 重复，去掉（页头已显示 title）
 function stripLeadingH1(body) {
   return body.replace(/^\s*#\s+[^\n]*\n/, '')
 }
-const rendered = computed(() => (doc.value ? renderDoc(stripLeadingH1(doc.value.body)) : { html: '', toc: [] }))
+const rendered = computed(() => {
+  if (!doc.value) return { html: '', toc: [] }
+  const r = renderDoc(stripLeadingH1(doc.value.body))
+  return { html: brandHtml(r.html), toc: r.toc.map(t => ({ ...t, text: brandText(t.text) })) }
+})
 
 const flat = computed(() => docs)
 const idx = computed(() => flat.value.findIndex(d => d.slug === slug.value))
-const prev = computed(() => (idx.value > 0 ? flat.value[idx.value - 1] : null))
-const next = computed(() => (idx.value >= 0 && idx.value < flat.value.length - 1 ? flat.value[idx.value + 1] : null))
+const prev = computed(() => {
+  const d = idx.value > 0 ? flat.value[idx.value - 1] : null
+  return d && { ...d, title: brandText(d.title) }
+})
+const next = computed(() => {
+  const d = idx.value >= 0 && idx.value < flat.value.length - 1 ? flat.value[idx.value + 1] : null
+  return d && { ...d, title: brandText(d.title) }
+})
 
 const TOP_OFFSET = 64
 
@@ -123,7 +150,9 @@ function onScroll() {
 function updateTitle() {
   const t = doc.value?.title
   const site = `${appCfg.workspaceName}开发中心`
-  document.title = !doc.value ? `文档不存在 · ${site}` : t === site || t === '以虎 One 开发中心' ? site : `${t} · ${site}`
+  // 首页标题形如「<平台名> 开发中心」，别再拼一次站名
+  const isIndex = t === site || t === `${appCfg.workspaceName} 开发中心` || t === '以虎 One 开发中心'
+  document.title = !doc.value ? `文档不存在 · ${site}` : isIndex ? site : `${t} · ${site}`
 }
 
 watch(() => appCfg.workspaceName, updateTitle)

@@ -18,11 +18,18 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { groupedDocs } from '@/devcenter/docs'
+import { useAppStore } from '@/stores/app'
 
 const emit = defineEmits(['navigate'])
 const route = useRoute()
-const groups = groupedDocs()
+const appCfg = useAppStore()
 const currentSlug = computed(() => route.params.slug || 'index')
+// 文档标题里的产品名按平台名称显示，和正文保持一致
+const groups = computed(() => {
+  const name = appCfg.workspaceName
+  const text = s => (name && name !== '以虎 One' ? String(s ?? '').replaceAll('以虎 One', name) : s)
+  return groupedDocs().map(g => ({ ...g, items: g.items.map(d => ({ ...d, title: text(d.title) })) }))
+})
 </script>
 
 <style scoped>
