@@ -3,7 +3,7 @@ title: 版本更新说明
 category: 参考
 order: 60
 summary: 以虎 One 平台每个版本的新功能、改动和升级注意事项
-updated: 2026-10-17
+updated: 2026-10-28
 ---
 
 # 版本更新说明
@@ -11,6 +11,14 @@ updated: 2026-10-17
 以虎 One 的版本号是 `主版本.次版本.修订号`（语义化版本）。**0.x 是测试版（Beta）**：功能还在快速迭代，个别界面和接口可能调整，调整会写在这里和 [变更记录](/dev/changelog)。加功能升次版本号，只修问题升修订号；接口稳定后发 1.0。
 
 当前版本在左侧栏底部、右上角头像菜单「关于」里可以看到；管理员在「管理 → 概览」里看升级。
+
+## v0.6.5 · 2026-10-28
+
+修订版：「模型与 AI」里 DeepSeek 的建议模型换成当前可用的名字。没有不兼容的改动。
+
+- **DeepSeek 预设模型更新**：选 DeepSeek 时建议模型改为 `deepseek-flash`（默认，由 DeepSeek-V4.1-Flash-1017 承接）和 `deepseek-v4-pro`，并列出旧名 `deepseek-v4-flash`（官方仍接受，路由到 V4.1-Flash、按 Flash 价格计费）。原来的 `deepseek-chat` / `deepseek-reasoner` 已被 DeepSeek 于 2026-07-24 停用，用它调用会直接报错，所以从建议列表里去掉了。开通向导的「大模型」一步用同一份清单，一并生效。见 [接入大模型](/dev/llm)
+
+升级：控制台「管理 → 概览」点「升级」，或执行 `./yh upgrade`；离线把 `yihu-one-0.6.5.tar.gz` 和 `.sig` 一起拷过去执行 `./yh upgrade --package yihu-one-0.6.5.tar.gz`。没有数据库结构变化。**升级后请到「管理 → 模型与 AI」看一眼已配置的 DeepSeek 模型**：模型名还是 `deepseek-chat` / `deepseek-reasoner` 的，改成 `deepseek-flash` 才能调用
 
 ## v0.6.4 · 2026-10-17
 

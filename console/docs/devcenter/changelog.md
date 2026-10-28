@@ -3,13 +3,14 @@ title: 变更记录
 category: 参考
 order: 61
 summary: 开发中心与接入接口的变化
-updated: 2026-10-17
+updated: 2026-10-28
 ---
 
 # 变更记录
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-28 | **DeepSeek 预设模型更新**：「管理 → 模型与 AI」和开通向导里选 DeepSeek 时，建议模型改为 `deepseek-flash`（默认，DeepSeek-V4.1-Flash）/ `deepseek-v4-pro`，同时保留旧名 `deepseek-v4-flash`（等同 `deepseek-flash`），去掉已于 2026-07-24 停用的 `deepseek-chat` / `deepseek-reasoner`（继续用旧名调用会报错，已配置的模型请把模型名改掉）。见 [接入大模型](/dev/llm) |
 | 2026-10-17 | **用平台的钉钉 / 飞书凭证**：新增 `GET /api/open/channel-token?provider=dingtalk\|feishu`，可信应用拿平台「登录方式」里那个企业内部应用的 access_token 直接调钉钉 / 飞书开放接口（考勤、审批……），不用在应用里再配密钥。JS / Python SDK 新增 `ws.channelToken()` / `ws.channel_token()`。见 [应用信息与消息](/dev/notify) |
 | 2026-10-17 | **登录后回到原来那一页**：应用用 hash 路由（`#/xxx`）时，没登录打开某一页，统一认证后会回到这一页，不再落到首页（平台授权页跳回应用时接上 `#/xxx`；标准 OIDC 客户端不变）。应用这边不用改，前提是未登录跳授权、回调跳回都用 HTTP 302（SDK 就是）。见 [统一认证 · 会话建议](/dev/sso) |
 | 2026-10-17 | **退出 / 换账号**：平台新增 `/logout?redirect=/apps/<code>/`——退出平台登录、到登录页，换个账号登录后直接回到应用（登录后的 redirect 现在可以是应用地址）。应用的 `/logout` 清掉自己的会话后 302 到这里；JS / Python SDK 新增 `ws.logoutUrl(req)` / `ws.logout_url(headers)`。见 [统一认证 · 会话建议](/dev/sso) |

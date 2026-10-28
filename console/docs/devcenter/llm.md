@@ -132,20 +132,22 @@ GET <平台地址>/api/open/llm/models
 
 ```json
 { "object": "list", "data": [
-  { "id": "deepseek-chat", "object": "model", "owned_by": "yihu-one", "name": "DeepSeek", "description": null, "default": true }
+  { "id": "deepseek-flash", "object": "model", "owned_by": "yihu-one", "name": "DeepSeek", "description": null, "default": true }
 ] }
 ```
 
 ## 指定模型
 
-不传 `model` 时用平台默认模型。要指定时，`model` 填「管理 → 模型与 AI」里该模型的**模型名**（即调上游用的名称，如 `deepseek-chat`）：
+不传 `model` 时用平台默认模型。要指定时，`model` 填「管理 → 模型与 AI」里该模型的**模型名**（即调上游用的名称，如 `deepseek-flash`）：
 
 ```js
 await openai.chat.completions.create({
-  model: 'deepseek-chat',
+  model: 'deepseek-flash',
   messages: [...]
 })
 ```
+
+DeepSeek 的旧名 `deepseek-v4-flash` 仍可用，上游会路由到 DeepSeek-V4.1-Flash 并按 Flash 价格计费；新配置建议用 `deepseek-flash`。
 
 - 模型未配置或未启用 → 404 `not_found_error`
 - 模型存在但当前用户的角色不在允许范围内 → 400（带用户 token 调用时才会按角色过滤）
