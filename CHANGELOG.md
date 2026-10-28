@@ -6,7 +6,12 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
-## Unreleased
+## 0.6.7 — 2026-10-28
+
+Patch release. The built-in assistant works with DeepSeek's thinking-mode models (e.g. `deepseek-v4-pro`). Thinking mode rejects the forced first tool call (`tool_choice: "required"`) with a 400; the assistant now retries once with `auto` when a 400 names `tool_choice`. Thinking mode also requires each tool-calling step's `reasoning_content` to be sent back, so it is now kept with the message and returned to the model that produced it. No database changes.
+
+## 0.6.6 — 2026-10-28
+
 
 Apps must carry a version: `yh-app.json` now requires a `version` field (semantic versioning, e.g. `1.0.0`), updated with every release. `yh add` and console installs refuse a manifest without one; existing apps keep deploying, with a reminder to add the field. The Node template ships with `0.1.0`, and the market detail page shows each hosted app's version. No database changes.
 
