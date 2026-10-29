@@ -119,7 +119,8 @@ if (staticDir && fs.existsSync(path.join(staticDir, 'index.html'))) {
     try {
       const { workspaceName } = await settings.get('general')
       const html = fs.readFileSync(indexFile, 'utf8')
-      res.type('html').send(html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(workspaceName || '以虎 One')}</title>`))
+      // 页面必须每次回源校验：标题和图标是按配置生成的，浏览器启发式缓存会让改过的名字迟迟不生效
+      res.type('html').set('Cache-Control', 'no-cache').send(html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(workspaceName || '以虎 One')}</title>`))
     } catch (e) { next(e) }
   })
   console.log(`[yh-console] 托管前端页面: ${staticDir}`)
