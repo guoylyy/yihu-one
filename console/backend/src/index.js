@@ -53,6 +53,21 @@ app.get(/^\/(WW_verify_[A-Za-z0-9]{1,64}\.txt)$/, async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
+// 浏览器标签页图标：直接按「系统设置 → LOGO」返回，首屏不用等前端配置（否则刷新时会先闪一下默认图标）。
+// 没传 LOGO 时 next() 交给 staticDir 里的默认图标；LOGO 存成外链时直接跳过去
+app.get('/favicon.svg', async (req, res, next) => {
+  try {
+    const { logo } = await settings.get('general')
+    const data = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(String(logo || ''))
+    if (data) {
+      res.type(data[1]).set('Cache-Control', 'public, max-age=60').send(Buffer.from(data[2], 'base64'))
+      return
+    }
+    if (/^https?:\/\//i.test(logo || '')) return res.redirect(302, logo)
+    next()
+  } catch (e) { next(e) }
+})
+
 // 公开 / 应用凭证
 app.use('/api/auth', authRouter)
 app.use('/api/sso', ssoRouter)
@@ -95,8 +110,19 @@ app.use(errorHandler)
 // 单容器部署: STATIC_DIR 指向前端构建产物时, 由后端直接托管页面(SPA 回退到 index.html)
 const staticDir = process.env.STATIC_DIR && path.resolve(process.env.STATIC_DIR)
 if (staticDir && fs.existsSync(path.join(staticDir, 'index.html'))) {
+  const indexFile = path.join(staticDir, 'index.html')
+  // 标签页标题也按「平台名称」返回：index.html 里的 <title> 是产物的默认值，
+  // 等前端 JS 起来再改的话，刷新时会先闪一下默认名字（Vue + Element Plus 加载完才轮到）
+  const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
   app.use(express.static(staticDir, { index: false, maxAge: '1h' }))
-  app.get(/^\/(?!api\/|health$|apps\/).*/, (req, res) => res.sendFile(path.join(staticDir, 'index.html')))
+  app.get(/^\/(?!api\/|health$|apps\/).*/, async (req, res, next) => {
+    try {
+      const { workspaceName } = await settings.get('general')
+      const html = fs.readFileSync(indexFile, 'utf8')
+      // 页面必须每次回源校验：标题和图标是按配置生成的，浏览器启发式缓存会让改过的名字迟迟不生效
+      res.type('html').set('Cache-Control', 'no-cache').send(html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(workspaceName || '以虎 One')}</title>`))
+    } catch (e) { next(e) }
+  })
   console.log(`[yh-console] 托管前端页面: ${staticDir}`)
 }
 
