@@ -110,8 +110,18 @@ app.use(errorHandler)
 // 单容器部署: STATIC_DIR 指向前端构建产物时, 由后端直接托管页面(SPA 回退到 index.html)
 const staticDir = process.env.STATIC_DIR && path.resolve(process.env.STATIC_DIR)
 if (staticDir && fs.existsSync(path.join(staticDir, 'index.html'))) {
+  const indexFile = path.join(staticDir, 'index.html')
+  // 标签页标题也按「平台名称」返回：index.html 里的 <title> 是产物的默认值，
+  // 等前端 JS 起来再改的话，刷新时会先闪一下默认名字（Vue + Element Plus 加载完才轮到）
+  const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
   app.use(express.static(staticDir, { index: false, maxAge: '1h' }))
-  app.get(/^\/(?!api\/|health$|apps\/).*/, (req, res) => res.sendFile(path.join(staticDir, 'index.html')))
+  app.get(/^\/(?!api\/|health$|apps\/).*/, async (req, res, next) => {
+    try {
+      const { workspaceName } = await settings.get('general')
+      const html = fs.readFileSync(indexFile, 'utf8')
+      res.type('html').send(html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(workspaceName || '以虎 One')}</title>`))
+    } catch (e) { next(e) }
+  })
   console.log(`[yh-console] 托管前端页面: ${staticDir}`)
 }
 
