@@ -17,5 +17,8 @@
   "deploy": {
     "branch": "release",
     "mode": "auto"
+  },
+  "ui": {
+    "responsive": true
   }
 }

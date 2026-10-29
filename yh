@@ -10,7 +10,8 @@
 #   yh new <code> --from node|python [--name 名称]   从模板新建应用
 #   yh add <code> --git <仓库地址> [--branch 分支]    接入已有应用（Git 仓库）
 #   yh add <code> --path <本机目录>                   接入已有应用（本机目录，会复制一份）
-#   yh up <code>                        上线 / 更新配置：建库 → 登记到控制台 → 构建 → 路由 → 健康检查
+#   yh up <code>                        上线 / 更新配置：建库 → 登记到控制台 → 构建 → 路由 → 健康检查（先跑一遍 yh check，只提示）
+#   yh check [应用目录|code] [--strict] 上架前静态自检：viewport、断点、写死宽度、表格降级、触控尺寸、版本号、/health；--strict 有 ❌ 时退出码非 0
 #   yh up console                       重新构建并重启控制台
 #   yh update <code>                    拉最新代码后重新上线（git 应用：备份 → 上线 → 失败自动回滚 → 通知）
 #   yh upgrade [--check]                平台自身升级（用更新包安装的机器）：查新版本 / 下载并升级，先备份，失败自动回滚
@@ -583,6 +584,7 @@ cmd_add() {
       fi
     fi
   fi
+  check_hint "$APPS/$code/src" "$m"
   green "✅ 已接入 apps/${code}，执行 yh up $code 上线"
 }
 
@@ -594,6 +596,207 @@ sync_path() {
 valid_code() {
   echo "$1" | grep -qE '^[a-z][a-z0-9-]{1,30}$' || die "应用 code 须为小写字母开头，只含小写字母、数字、短横线（2~31 位），如 kaoqin、purchase"
   case "$RESERVED_CODES" in *" $1 "*) die "$1 是平台保留名称，换一个";; esac
+}
+
+# ---------------------------------------------------------------- check（上架前静态自检）
+# 只读源码、不起服务：移动端适配的几条硬要求 + 清单版本号 + 健康检查路由。查得到写法，查不到真实渲染——
+# 375px 下到底有没有横向滚动，还得按 console/docs/devcenter/checklist.md「移动端与自适应」在浏览器里过一遍
+CK_PRUNE="node_modules .git dist build coverage __pycache__ .venv venv vendor .next .nuxt .output"
+# 脚本 / 模板文件里出现这些标签，就当作带页面（服务端拼的 HTML、模板字符串）
+CK_MARKUP='<(!doctype|html|head|body|meta|style|div|table|main|section|header|nav|ul|form|button)[[:space:]>/]'
+
+check_list() { # check_list <目录>：要看的源码文件（跳过依赖、构建产物、平台 SDK、压缩文件），一行一个
+  local d n prune=""
+  for d in $CK_PRUNE; do prune="$prune -name $d -o"; done
+  # shellcheck disable=SC2086
+  find "$1" \( ${prune% -o} \) -prune -o -type f \( -name '*.html' -o -name '*.htm' -o -name '*.vue' -o -name '*.svelte' \
+    -o -name '*.jsx' -o -name '*.tsx' -o -name '*.css' -o -name '*.scss' -o -name '*.sass' -o -name '*.less' -o -name '*.styl' \
+    -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.ts' -o -name '*.py' -o -name '*.go' -o -name '*.java' \
+    -o -name '*.kt' -o -name '*.rb' -o -name '*.php' -o -name '*.rs' \) \
+    ! -name 'yh-one.mjs' ! -name 'yh_one.py' ! -name '*.min.*' -print 2>/dev/null | LC_ALL=C sort
+}
+ck_files() { local f; while IFS= read -r f; do grep -qiE "$1" "$f" 2>/dev/null && echo "$f"; done < "$2"; } # ck_files <正则> <文件清单>
+ck_count() { local f n=0 c; while IFS= read -r f; do c="$(grep -oiE "$1" "$f" 2>/dev/null | wc -l | tr -d ' ')"; n=$((n + c)); done < "$2"; echo "$n"; }
+ck_pad() { # ck_pad <文字> <列宽>：中文按两列补齐
+  local b a w
+  b="$(printf %s "$1" | LC_ALL=C wc -c | tr -d ' ')"
+  a="$(printf %s "$1" | LC_ALL=C tr -d '\200-\377' | LC_ALL=C wc -c | tr -d ' ')"
+  w=$((a + (b - a) * 2 / 3))
+  printf %s "$1"; [ "$w" -lt "$2" ] && printf "%$(($2 - w))s" ''
+  return 0
+}
+ck_item() { # ck_item ok|warn|fail|skip <检查项> <说明>
+  local icon
+  case "$1" in
+    ok) icon="✅"; CK_OK=$((CK_OK + 1));;
+    warn) icon="⚠️"; CK_WARN=$((CK_WARN + 1));;
+    fail) icon="❌"; CK_FAIL=$((CK_FAIL + 1));;
+    *) icon="➖"; CK_SKIP=$((CK_SKIP + 1));;
+  esac
+  printf '  %s ' "$icon"; ck_pad "$2" 20; printf ' %s\n' "$3"
+}
+ck_show() { # ck_show <命中清单> <目录>：列出前 3 条命中（文件:行  内容）
+  local n; n="$(wc -l < "$1" | tr -d ' ')"
+  head -3 "$1" | while IFS= read -r l; do gray "       ${l#"$2"/}"; done
+  [ "$n" -gt 3 ] && gray "       …共 $n 处"
+  return 0
+}
+ck_rel() { # ck_rel <文件清单> <目录>：相对路径，最多列 3 个
+  local f out="" n=0
+  while IFS= read -r f; do n=$((n + 1)); [ $n -le 3 ] && out="$out${out:+、}${f#"$2"/}"; done < "$1"
+  [ $n -gt 3 ] && out="$out 等 $n 个文件"
+  echo "$out"
+}
+
+check_app() { # check_app <源码目录> [清单路径]：逐项输出，有 ❌ 时返回 1
+  local dir="${1%/}" m="${2:-}" lim="${YH_CHECK_FIXED_WIDTH:-900}" tmp f n v h
+  CK_OK=0; CK_WARN=0; CK_FAIL=0; CK_SKIP=0
+  [ -n "$m" ] || { [ -f "$dir/yh-app.json" ] && m="$dir/yh-app.json"; }
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/yh-check.XXXXXX")"
+  check_list "$dir" > "$tmp/all"
+  : > "$tmp/ui"; : > "$tmp/page"; : > "$tmp/script"
+  while IFS= read -r f; do
+    case "$f" in
+      *.css|*.scss|*.sass|*.less|*.styl) echo "$f" >> "$tmp/ui";;
+      *.html|*.htm|*.vue|*.svelte) echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page";;
+      *) echo "$f" >> "$tmp/script"
+         grep -qiE "$CK_MARKUP" "$f" 2>/dev/null && { echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page"; };;
+    esac
+  done < "$tmp/all"
+  cat "$tmp/ui" "$tmp/script" | LC_ALL=C sort -u > "$tmp/code"
+
+  if [ ! -s "$tmp/page" ]; then
+    for v in "viewport meta" "响应式断点" "固定宽度" "表格降级" "触控尺寸"; do ck_item skip "$v" "没有前端页面（.html / .vue / 带 HTML 的模板字符串），跳过"; done
+  else
+    # 1. viewport
+    ck_files 'name[[:space:]]*=[[:space:]]*["'"'"']?viewport' "$tmp/page" > "$tmp/vp"
+    if [ ! -s "$tmp/vp" ]; then
+      ck_item fail "viewport meta" '没有 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">，手机上会按桌面宽度缩小显示'
+    elif [ -n "$(ck_files 'viewport-fit[[:space:]]*=[[:space:]]*cover' "$tmp/vp")" ]; then
+      ck_item ok "viewport meta" "viewport-fit=cover 已包含（$(ck_rel "$tmp/vp" "$dir")）"
+    else
+      ck_item fail "viewport meta" "$(ck_rel "$tmp/vp" "$dir") 的 viewport 缺 viewport-fit=cover（iPhone 安全区 env(safe-area-inset-*) 不生效）"
+    fi
+    # 2. 断点：@media (max-width…) 桌面优先、(min-width…) 移动优先，或 JS 断点工具
+    local nmax nmin ntool vals
+    nmax="$(ck_count '@media[^{]*max-width' "$tmp/ui")"; nmin="$(ck_count '@media[^{]*min-width' "$tmp/ui")"
+    ntool="$(ck_count 'matchMedia|useViewport|useBreakpoints|useMediaQuery' "$tmp/code")"
+    vals="$(while IFS= read -r f; do grep -oiE '@media[^{]*max-width[[:space:]]*:[[:space:]]*[0-9.]+(px|em|rem)' "$f" 2>/dev/null; done < "$tmp/ui" \
+      | grep -oE '[0-9.]+(px|em|rem)$' | LC_ALL=C sort -u | tr '\n' '/' | sed 's#/$##; s#/# / #g')"
+    if [ "$nmax" -gt 0 ]; then
+      ck_item ok "响应式断点" "找到 $nmax 处 @media (max-width: ${vals:-…})$([ "$ntool" -gt 0 ] && echo "，另有 $ntool 处断点工具")"
+    elif [ "$nmin" -gt 0 ]; then
+      ck_item ok "响应式断点" "找到 $nmin 处 @media (min-width…)（移动优先写法）"
+    elif [ "$ntool" -gt 0 ]; then
+      ck_item ok "响应式断点" "找到 $ntool 处断点工具（matchMedia / useViewport）"
+    else
+      ck_item warn "响应式断点" "没找到 @media (max-width…) 或 matchMedia / useViewport，页面大概率只按桌面写"
+    fi
+    # 3. 写死的大宽度（width / min-width ≥ 阈值；max-width 和媒体查询里的不算）
+    while IFS= read -r f; do
+      grep -noiE '(^|[^-[:alnum:]_(])(min-)?width[[:space:]]*:[[:space:]]*["'"'"']?[0-9]+px' "$f" 2>/dev/null \
+        | awk -v lim="$lim" -v f="$f" -F: '{ v = $0; sub(/px.*/, "", v); sub(/.*[^0-9]/, "", v); m = $0; sub(/^[0-9]+:[^a-zA-Z]*/, "", m); if (v + 0 >= lim) print f ":" $1 "  " m }'
+    done < "$tmp/ui" > "$tmp/wide"
+    n="$(wc -l < "$tmp/wide" | tr -d ' ')"
+    if [ "$n" -eq 0 ]; then ck_item ok "固定宽度" "没有写死 ≥${lim}px 的 width / min-width"
+    else ck_item warn "固定宽度" "$n 处写死 ≥${lim}px 的宽度，375px 屏上会横向滚动（改用 max-width / 百分比 / 断点）"; ck_show "$tmp/wide" "$dir"; fi
+    # 4. 表格：同一文件里要有断点或卡片降级
+    ck_files '<table[[:space:]>]|<el-table[[:space:]>/]' "$tmp/page" > "$tmp/table"
+    : > "$tmp/bare"
+    while IFS= read -r f; do grep -qiE '@media|matchMedia|useViewport|useBreakpoints|isMobile|data-label|card-list' "$f" || echo "$f" >> "$tmp/bare"; done < "$tmp/table"
+    if [ ! -s "$tmp/table" ]; then ck_item ok "表格降级" "没有表格"
+    elif [ ! -s "$tmp/bare" ]; then ck_item ok "表格降级" "$(wc -l < "$tmp/table" | tr -d ' ') 个文件有表格，同文件内都有窄屏降级"
+    else ck_item warn "表格降级" "$(ck_rel "$tmp/bare" "$dir") 有表格，未见卡片降级（手机端需要卡片列表）"; fi
+    # 5. 触控尺寸：按钮 / 链接类规则里 height < 44px，或 Element Plus 小号按钮
+    while IFS= read -r f; do
+      awk -v f="$f" '{
+        line = $0; gsub(/[{]/, "{\n", line); gsub(/[}]/, "}\n", line); gsub(/;/, ";\n", line)
+        k = split(line, part, "\n")
+        for (i = 1; i <= k; i++) {
+          p = part[i]
+          if (p ~ /[{][ \t]*$/) { sel = p; continue }
+          if (match(p, /(^|[^-a-zA-Z])(min-)?height[ \t]*:[ \t]*[0-9]+px/)) {
+            s = substr(p, RSTART, RLENGTH); v = s; sub(/px$/, "", v); sub(/.*[^0-9]/, "", v)
+            ctx = tolower(sel " " p)
+            if (v + 0 >= 16 && v + 0 < 44 && ctx ~ /button|btn|<a[ >]|link|tab|action/) { sub(/^[^a-zA-Z]*/, "", s); print f ":" FNR "  " s }
+          }
+          if (p ~ /[}]/) sel = ""
+        }
+      }' "$f" 2>/dev/null
+      grep -noiE '<el-button[^>]*size="(small|mini)"' "$f" 2>/dev/null | sed "s#^#$f:#; s#:\\([0-9]*\\):#:\\1  #"
+    done < "$tmp/ui" > "$tmp/tap"
+    n="$(wc -l < "$tmp/tap" | tr -d ' ')"
+    if [ "$n" -eq 0 ]; then ck_item ok "触控尺寸" "没发现低于 44px 的按钮 / 链接高度"
+    else ck_item warn "触控尺寸" "$n 处按钮 / 链接高度低于 44px，手机上容易点错（min-height: 44px）"; ck_show "$tmp/tap" "$dir"; fi
+  fi
+
+  # 6. 清单：响应式声明 + 版本号
+  if [ -z "$m" ] || [ ! -f "$m" ]; then
+    ck_item skip "响应式声明" "没有 yh-app.json，跳过"
+    ck_item fail "版本号" "没有 yh-app.json（应用清单，模板见 templates/node/yh-app.json）"
+  elif ! jq empty "$m" 2>/dev/null; then
+    ck_item skip "响应式声明" "yh-app.json 不是合法 JSON，跳过"
+    ck_item fail "版本号" "yh-app.json 不是合法 JSON"
+  else
+    v="$(jq -r 'if (.ui | type) == "object" and (.ui | has("responsive")) then (.ui.responsive | tostring) else "" end' "$m")"
+    case "$v" in
+      true) ck_item ok "响应式声明" "yh-app.json ui.responsive=true";;
+      "") ck_item warn "响应式声明" "yh-app.json 没有声明 ui.responsive（新应用应声明为 true）";;
+      *) ck_item warn "响应式声明" "yh-app.json 声明 ui.responsive=${v}：不适配手机要在上架说明里写明原因";;
+    esac
+    v="$(mf "$m" .version)"
+    if [ -z "$v" ]; then ck_item fail "版本号" "yh-app.json 缺少 version（必填，语义化版本，如 1.0.0；安装时同样会拒）"
+    elif echo "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then ck_item ok "版本号" "yh-app.json version=$v"
+    else ck_item warn "版本号" "yh-app.json version=${v}，建议用语义化版本 x.y.z"; fi
+  fi
+
+  # 7. 健康检查：上线时 yh up 会实际请求一次（app_http），这里先在源码里找路由，没起服务也能发现
+  if [ -f "$dir/Dockerfile" ]; then
+    h=""; [ -n "$m" ] && [ -f "$m" ] && h="$(mf "$m" .health 2>/dev/null)"; h="${h:-/health}"
+    : > "$tmp/health"
+    while IFS= read -r f; do grep -qF -e "'$h'" -e "\"$h\"" -e "\`$h\`" "$f" 2>/dev/null && echo "$f" >> "$tmp/health"; done < "$tmp/script"
+    if [ -s "$tmp/health" ]; then ck_item ok "健康检查" "$(ck_rel "$tmp/health" "$dir") 有 $h 路由"
+    else ck_item fail "健康检查" "有 Dockerfile，但源码里没找到 $h 路由（平台据此判断应用是否正常，须免登录返回 200）"; fi
+  elif [ -n "$m" ] && [ -f "$m" ] && [ -n "$(mf "$m" .image 2>/dev/null)" ]; then
+    ck_item skip "健康检查" "用现成镜像（image），上线时 yh up 实际请求一次"
+  else
+    ck_item skip "健康检查" "没有 Dockerfile，跳过"
+  fi
+
+  rm -rf "$tmp"
+  echo "  结论：$CK_OK 项通过，$CK_WARN 项警告，$CK_FAIL 项失败$([ "$CK_SKIP" -gt 0 ] && echo "，$CK_SKIP 项跳过")"
+  [ "$CK_FAIL" -eq 0 ]
+}
+
+cmd_check() {
+  local dir="" strict=0 m=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --strict) strict=1; shift;;
+      --fixed-width) [ $# -ge 2 ] && echo "$2" | grep -qE '^[0-9]+$' || die "--fixed-width 后面跟像素数，如 1000"
+        YH_CHECK_FIXED_WIDTH="$2"; shift 2;;
+      -*) die "未知参数 $1（用法：yh check [应用目录 | 应用 code] [--strict] [--fixed-width 像素]）";;
+      *) [ -z "$dir" ] || die "一次只检查一个目录"; dir="$1"; shift;;
+    esac
+  done
+  dir="${dir:-.}"
+  # 也可以直接写已接入应用的 code：查 apps/<code>/src，清单按 yh up 的顺序找
+  if [ ! -d "$dir" ] && echo "$dir" | grep -qE '^[a-z][a-z0-9-]{1,30}$' && [ -d "$APPS/$dir/src" ]; then m="$(manifest "$dir")"; dir="$APPS/$dir/src"; fi
+  [ -d "$dir" ] || die "目录不存在：$dir"
+  command -v jq >/dev/null 2>&1 || die "缺少 jq（brew install jq / apt install jq）"
+  echo "yh check · ${dir%/}"
+  check_app "$dir" "$m" && return 0
+  [ "$strict" = 1 ] && exit 1
+  gray "  有 ❌ 项，上架前修好；CI / 上架前用 yh check --strict（有 ❌ 时退出码非 0）"
+  return 0
+}
+
+# check_hint <源码目录> [清单]：yh add / yh up 前跑一次非严格检查，只提示、不阻断（子 shell，出什么错都不影响上线）
+check_hint() {
+  [ -d "$1" ] || return 0
+  step "上架自检（移动端适配 / 版本号 / 健康检查，不阻断）"
+  ( check_app "$1" "${2:-}" ) || red "  有 ❌ 项：上架前修好，修完用 yh check $1 --strict 复查"
+  return 0
 }
 
 # ---------------------------------------------------------------- up
@@ -618,6 +821,7 @@ cmd_up() {
   docker ps --format '{{.Names}}' | grep -q '^yh-console$' || cmd_start_platform
   step "上线 ${name}（${code}）→ $url/"
   [ -n "$(mf "$m" .version)" ] || gray "  清单缺少 version 字段（应用接入规范：必须带明确版本号，如 1.0.0），下次发版补上"
+  check_hint "$dir/src" "$m"
 
   # 1. 数据库
   if [ "$dbwanted" = "true" ]; then
@@ -1777,6 +1981,7 @@ case "$cmd" in
   init) cmd_init "$@";;
   start) cmd_start;;
   new) cmd_new "$@";;
+  check) cmd_check "$@";;
   add) cmd_add "$@";;
   up) cmd_up "$@";;
   update) cmd_update "${1:-}" 手动;;
@@ -1803,5 +2008,5 @@ case "$cmd" in
   autostart) cmd_autostart;;
   destroy) cmd_destroy;;
   boot) cmd_boot;;
-  *) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//';;
+  *) sed -n '2,/^set -uo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//';;
 esac

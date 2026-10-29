@@ -3,7 +3,7 @@ title: 应用部署规范
 category: 入门
 order: 3
 summary: 应用要满足哪些条件，才能插到以虎 One 上一键部署、自动发布
-updated: 2026-10-15
+updated: 2026-10-29
 ---
 
 # 应用部署规范
@@ -53,7 +53,8 @@ CMD ["node", "server.js"]
   "visibility": null,
   "isDefault": false,
   "env": {},
-  "deploy": { "branch": "release", "mode": "auto" }
+  "deploy": { "branch": "release", "mode": "auto" },
+  "ui": { "responsive": true }
 }
 ```
 
@@ -75,6 +76,7 @@ CMD ["node", "server.js"]
 | `env` | 额外的环境变量（不要放密钥，密钥让管理员写进服务器上的 `apps/<code>/.env`） |
 | `deploy` | `branch` 跟踪哪个分支；`mode`：`auto` 自动发布 / `manual` 只通知有新版本，由管理员在控制台点「发布」 |
 | `image` | 不用 Dockerfile、直接用现成镜像时填 |
+| `ui` | 可选，`{ "responsive": true }` 声明页面已按 [上线检查清单 · 移动端与自适应](/dev/checklist) 适配手机。**新应用应声明为 `true`**（`yh new` 生成的模板已带上）；`yh check` 没看到这个声明会给警告，声明为 `false` 要在上架说明里写明为什么不适配手机 |
 
 `icon` 可以写：
 
@@ -144,7 +146,48 @@ CMD ["node", "server.js"]
 
 [Python SDK](/dev/sdk-python) 和 [Node SDK](/dev/sdk-node) 直接读这些变量，**什么都不用配**。
 
+## 上架前自检：`yh check`
+
+机器能查的先让机器查。`yh check` 只读源码、不起服务，不需要 Docker 和平台（本机没装平台时，单独拿平台仓库里的 `yh` 脚本也能跑，只依赖 bash 和 jq）：
+
+```bash
+yh check                 # 检查当前目录
+yh check ./purchase      # 检查指定目录；已接入的应用也可以直接写 code（查 apps/<code>/src）
+yh check --strict        # 有 ❌ 时退出码非 0，放进 CI / release.sh
+yh check --fixed-width 1000   # 「写死宽度」的阈值，默认 900px
+```
+
+```
+yh check · purchase
+  ✅ viewport meta        viewport-fit=cover 已包含（frontend/index.html）
+  ✅ 响应式断点           找到 6 处 @media (max-width: 768px / 1024px)
+  ✅ 固定宽度             没有写死 ≥900px 的 width / min-width
+  ⚠️ 表格降级             frontend/src/views/OrderList.vue 有表格，未见卡片降级（手机端需要卡片列表）
+  ✅ 触控尺寸             没发现低于 44px 的按钮 / 链接高度
+  ✅ 响应式声明           yh-app.json ui.responsive=true
+  ✅ 版本号               yh-app.json version=1.2.0
+  ✅ 健康检查             backend/src/index.js 有 /health 路由
+  结论：7 项通过，1 项警告，0 项失败
+```
+
+| 检查项 | 怎么判断 | 不通过 |
+| --- | --- | --- |
+| viewport meta | 页面里有 `<meta name="viewport">` 且带 `viewport-fit=cover` | ❌ |
+| 响应式断点 | 有 `@media (max-width…)` / `(min-width…)`，或用了 `matchMedia` / `useViewport` | ⚠️ |
+| 固定宽度 | `width` / `min-width` 写死 ≥900px（`max-width` 不算） | ⚠️ |
+| 表格降级 | 有 `<table>` / `el-table` 的文件里没有 `@media`、`data-label`、`isMobile` 之类的窄屏降级 | ⚠️ |
+| 触控尺寸 | 按钮 / 链接的 `height` 低于 44px，或 `<el-button size="small">` | ⚠️ |
+| 响应式声明 | 清单 `ui.responsive` 是否为 `true` | ⚠️ |
+| 版本号 | 清单有 `version` | ❌ |
+| 健康检查 | 有 Dockerfile 时，源码里能找到清单 `health`（默认 `/health`）这个路由 | ❌ |
+
+看的范围：目录下的 `.html` / `.vue` / `.svelte` / `.jsx` / `.tsx`、样式文件，以及带 HTML 的脚本（服务端拼的页面、模板字符串）；跳过 `node_modules`、`dist`、`build` 和平台 SDK。
+
+`yh add`、`yh up` 之前平台会自动跑一遍（不阻断，只提示）。**它只查写法，查不到真实渲染**：通过了也要按清单在 375px 下把每页过一遍；警告是提示不是判决，确认没问题（比如表格的降级写在全局样式里）可以忽略。
+
 ## 上线前自检
+
+- [ ] `yh check --strict` 通过（见上一节）
 
 - [ ] 本地 `docker build .` 能过，`docker run -e PORT=3000 -p 3000:3000 <镜像>` 后 `curl localhost:3000/health` 返回 200
 - [ ] 没有把密钥写进代码、清单或 Dockerfile

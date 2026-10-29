@@ -3,13 +3,14 @@ title: 变更记录
 category: 参考
 order: 61
 summary: 开发中心与接入接口的变化
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 # 变更记录
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-29 | **脚手架默认响应式 + `yh check`**：`yh new` 生成的 Node / Python 模板首页改成移动端基线——`viewport` 带 `viewport-fit=cover`、正文 15px、宽屏表格 ≤768px 自动变「标签 + 值」卡片（纯 CSS）、可点元素 ≥44px、底部操作条适配 iPhone 安全区，两个模板页面一致；模板清单带上新的可选字段 `"ui": { "responsive": true }`（新应用应声明为 `true`）。新增 `yh check [目录] [--strict]` 上架前静态自检：viewport、断点、写死宽度、表格降级、触控尺寸、响应式声明、版本号、`/health` 路由，`--strict` 有 ❌ 时退出码非 0，可放进 CI；`yh add` / `yh up` 之前自动跑一遍，只提示不阻断。见 [应用部署规范 · 上架前自检](/dev/deploy)、[上线检查清单](/dev/checklist) |
 | 2026-10-28 | **移动端自适应列为硬性要求**：上线检查清单新增「移动端与自适应（必须）」一组——`viewport` 带 `viewport-fit=cover`；**375px 下每页不得横向滚动**；侧边导航 ≤1024px 收图标栏、≤768px 收抽屉或底部导航；数据表格 ≤768px 转卡片列表；弹窗/抽屉全屏且主按钮固定在底部；触控目标 ≥44px、正文 ≥14px；表单标签在上、输入类型正确；图表随容器 resize；底部操作条适配 iPhone 安全区；375×667 / 768×1024 / 1440×900 三种尺寸截图留档；桌面重操作在手机上提示改用电脑或明确禁用。背景：用户入口一半以上在手机端（钉钉 / 飞书 / 微信内置浏览器），只做桌面等于没交付。见 [上线检查清单](/dev/checklist)、[快速开始](/dev/quickstart) |
 | 2026-10-28 | **应用必须带版本号**：清单 `yh-app.json` 的 `version`（语义化版本，如 `1.0.0`）由可选改为**必填**——安装（`yh add` / 控制台）时校验，缺失装不上，存量应用更新时会提醒补上；Node 模板的清单带上了 `version`；应用市场详情页显示版本号。见 [应用部署规范](/dev/deploy) |
 | 2026-10-28 | **DeepSeek 预设模型更新**：「管理 → 模型与 AI」和开通向导里选 DeepSeek 时，建议模型改为 `deepseek-flash`（默认，DeepSeek-V4.1-Flash）/ `deepseek-v4-pro`，同时保留旧名 `deepseek-v4-flash`（等同 `deepseek-flash`），去掉已于 2026-07-24 停用的 `deepseek-chat` / `deepseek-reasoner`（继续用旧名调用会报错，已配置的模型请把模型名改掉）。见 [接入大模型](/dev/llm) |
