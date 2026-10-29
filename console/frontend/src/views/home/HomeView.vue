@@ -187,7 +187,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Promotion, Setting, ArrowRight, Link } from '@element-plus/icons-vue'
 import AppIcon from '@/components/AppIcon.vue'
@@ -226,13 +226,20 @@ const saving = ref(false)
 const agentDlg = ref(false)
 const addDlg = reactive({ visible: false, type: 'data', appId: null, title: '', url: '', text: '', tool: '', args: '', view: 'auto', x: '', y: '' })
 
+// 问候语和日期跟着当前时间走：页面开一整夜，也不能还停在「晚上好」
+const now = ref(new Date())
+let clock = null
+function syncClock() {
+  if (!document.hidden) now.value = new Date()
+}
+
 const today = computed(() => {
-  const d = new Date()
+  const d = now.value
   const w = '日一二三四五六'[d.getDay()]
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日 星期${w}`
 })
 const defaultGreeting = computed(() => {
-  const h = new Date().getHours()
+  const h = now.value.getHours()
   const p = h < 6 ? '凌晨好' : h < 12 ? '上午好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好'
   return `${p}，${user.me?.name || ''}`
 })
@@ -336,6 +343,13 @@ async function load() {
 onMounted(() => {
   load()
   if (user.permissions.assistant !== false) assistant.loadStatus()
+  clock = setInterval(syncClock, 60_000)
+  document.addEventListener('visibilitychange', syncClock)
+})
+
+onBeforeUnmount(() => {
+  clearInterval(clock)
+  document.removeEventListener('visibilitychange', syncClock)
 })
 </script>
 

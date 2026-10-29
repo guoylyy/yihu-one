@@ -168,7 +168,7 @@ async function loadConfig() {
   configError.value = ''
   try {
     config.value = await authApi.config()
-    appCfg.config = config.value
+    appCfg.setConfig(config.value)
     if (inDing && config.value?.dingtalk?.enabled) {
       inappLogin()
     } else if (inAppProvider.value) {

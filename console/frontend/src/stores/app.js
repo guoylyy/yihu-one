@@ -43,6 +43,11 @@ export const useAppStore = defineStore('app', {
     }
   },
   actions: {
+    /** 写入公开配置：主题和浏览器图标一起应用（登录页自己拉配置时也走这里，别直接赋值） */
+    setConfig(c) {
+      this.config = c || {}
+      this.applyLook()
+    },
     /** 拉一次；force 用于设置保存后刷新 */
     load(force = false) {
       if (this.config && !force) return Promise.resolve(this.config)
@@ -50,8 +55,7 @@ export const useAppStore = defineStore('app', {
       this.loading = authApi
         .config()
         .then(c => {
-          this.config = c || {}
-          this.applyLook()
+          this.setConfig(c)
           return this.config
         })
         .catch(() => {
