@@ -53,6 +53,21 @@ app.get(/^\/(WW_verify_[A-Za-z0-9]{1,64}\.txt)$/, async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
+// 浏览器标签页图标：直接按「系统设置 → LOGO」返回，首屏不用等前端配置（否则刷新时会先闪一下默认图标）。
+// 没传 LOGO 时 next() 交给 staticDir 里的默认图标；LOGO 存成外链时直接跳过去
+app.get('/favicon.svg', async (req, res, next) => {
+  try {
+    const { logo } = await settings.get('general')
+    const data = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(String(logo || ''))
+    if (data) {
+      res.type(data[1]).set('Cache-Control', 'public, max-age=60').send(Buffer.from(data[2], 'base64'))
+      return
+    }
+    if (/^https?:\/\//i.test(logo || '')) return res.redirect(302, logo)
+    next()
+  } catch (e) { next(e) }
+})
+
 // 公开 / 应用凭证
 app.use('/api/auth', authRouter)
 app.use('/api/sso', ssoRouter)
