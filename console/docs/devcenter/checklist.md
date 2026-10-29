@@ -3,7 +3,7 @@ title: 上线检查清单
 category: 入门
 order: 2
 summary: 应用插到平台上线前逐项核对
-updated: 2026-09-28
+updated: 2026-10-28
 ---
 
 # 上线检查清单
@@ -38,6 +38,30 @@ updated: 2026-09-28
 - [ ] 前端请求、链接都是相对路径，挂在 `/apps/<code>/` 下能正常用
 - [ ] 数据只写 `DATABASE_URL` 和 `/data`
 - [ ] 有 `release.sh`，`TEST_CMD` 是真实的测试命令
+
+## 移动端与自适应（必须）
+
+平台是从工作台点进去的，用户一半以上的入口在手机（钉钉 / 飞书 / 微信内置浏览器），
+**桌面能用的应用不等于能交付的应用**。以下逐条核对，缺一项就算没适配：
+
+- [ ] `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">`
+- [ ] **375px 宽下每一页都没有横向滚动**（`document.body.scrollWidth ≤ window.innerWidth`），不靠缩放才能用
+- [ ] 侧边导航：≤1024px 收成图标栏；≤768px 收成抽屉或底部导航，当前页有高亮，能一键收起
+- [ ] 数据表格：≤768px 转为卡片列表（`标签 + 值`），不保留需要左右拖的宽表格
+- [ ] 弹窗 / 抽屉：≤768px 全屏或底部 sheet，主按钮固定在可见区域底部，不被键盘顶出可视区
+- [ ] 侧边栏类功能（助手、详情面板）在手机上全宽全高，有关闭按钮，不遮挡主导航
+- [ ] 触控目标 ≥ 44×44px；正文 ≥ 14px；行高与间距按手指操作留白
+- [ ] 表单单列、标签在上；输入类型正确（金额 `inputmode="decimal"`、电话 `type="tel"`、日期用日期选择器）
+- [ ] 图表随容器尺寸变化（`resize` 或 `ResizeObserver`），窄屏隐藏图例、减少刻度
+- [ ] iPhone 安全区：底部操作条加 `padding-bottom: env(safe-area-inset-bottom)`
+- [ ] 375×667 / 768×1024 / 1440×900 三种尺寸各走一遍主要流程，截图留档
+- [ ] 桌面上才合理的重操作（大批量导入、多文件上传、复杂对账）在手机上给出「建议在电脑上操作」提示，或明确禁用而不是让用户点进死路
+
+> 自查命令（浏览器控制台）：
+> ```js
+> document.body.scrollWidth <= window.innerWidth  // 必须为 true
+> ```
+> 拿不到 375px 真机时，用开发者工具切到 iPhone SE（375×667）逐页过一遍。
 
 ## AI（用到时）
 

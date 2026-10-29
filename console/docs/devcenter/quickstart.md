@@ -51,5 +51,6 @@ app.get('/', (req, res) => res.send(`你好，${req.yhUser.name}`))
 ## 5. 下一步
 
 - 在关键操作处上报使用数据：[使用数据](/dev/usage)
+- 界面从 375px 起就要能用（手机上不横向滚动、表格变卡片、弹窗全屏）：[上线检查清单 · 移动端与自适应](/dev/checklist)
 - 让 AI 助手能用你的应用：[接入 AI 助手](/dev/mcp)
 - 上线前过一遍 [上线检查清单](/dev/checklist)

@@ -10,6 +10,7 @@ updated: 2026-10-28
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-28 | **移动端自适应列为硬性要求**：上线检查清单新增「移动端与自适应（必须）」一组——`viewport` 带 `viewport-fit=cover`；**375px 下每页不得横向滚动**；侧边导航 ≤1024px 收图标栏、≤768px 收抽屉或底部导航；数据表格 ≤768px 转卡片列表；弹窗/抽屉全屏且主按钮固定在底部；触控目标 ≥44px、正文 ≥14px；表单标签在上、输入类型正确；图表随容器 resize；底部操作条适配 iPhone 安全区；375×667 / 768×1024 / 1440×900 三种尺寸截图留档；桌面重操作在手机上提示改用电脑或明确禁用。背景：用户入口一半以上在手机端（钉钉 / 飞书 / 微信内置浏览器），只做桌面等于没交付。见 [上线检查清单](/dev/checklist)、[快速开始](/dev/quickstart) |
 | 2026-10-28 | **应用必须带版本号**：清单 `yh-app.json` 的 `version`（语义化版本，如 `1.0.0`）由可选改为**必填**——安装（`yh add` / 控制台）时校验，缺失装不上，存量应用更新时会提醒补上；Node 模板的清单带上了 `version`；应用市场详情页显示版本号。见 [应用部署规范](/dev/deploy) |
 | 2026-10-28 | **DeepSeek 预设模型更新**：「管理 → 模型与 AI」和开通向导里选 DeepSeek 时，建议模型改为 `deepseek-flash`（默认，DeepSeek-V4.1-Flash）/ `deepseek-v4-pro`，同时保留旧名 `deepseek-v4-flash`（等同 `deepseek-flash`），去掉已于 2026-07-24 停用的 `deepseek-chat` / `deepseek-reasoner`（继续用旧名调用会报错，已配置的模型请把模型名改掉）。见 [接入大模型](/dev/llm) |
 | 2026-10-17 | **用平台的钉钉 / 飞书凭证**：新增 `GET /api/open/channel-token?provider=dingtalk\|feishu`，可信应用拿平台「登录方式」里那个企业内部应用的 access_token 直接调钉钉 / 飞书开放接口（考勤、审批……），不用在应用里再配密钥。JS / Python SDK 新增 `ws.channelToken()` / `ws.channel_token()`。见 [应用信息与消息](/dev/notify) |
