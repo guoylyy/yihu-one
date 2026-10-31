@@ -24,6 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./scripts/tunnel-test.sh               # 隧道配置自测（改 yh 的 render_frpc / EXTRA_TUNNELS / APPS_URL / doctor 隧道检查后必跑；不需要 Docker）
 ./scripts/health-test.sh               # 公网入口巡检自测（改 yh 的 public_watch / notify 或 cloud/healthcheck.sh 后必跑；不需要 Docker）
 ./scripts/platform-call-test.sh        # 平台调用补发自测（改 yh 的 platform_must / platform_queue / platform_flush 后必跑；不需要 Docker）
+./scripts/mount-test.sh                # 宿主目录挂载自测（改 yh 的 mount_* / mounts_* / render_compose / cmd_mount 后必跑；不需要 Docker，selftest 也会调，已部署平台的机器上用 selftest.sh --offline）
 cd console/backend && npm test         # 单元测试（node:test，不需要数据库）
 cd console/backend && NODE_ENV=test node --test test/market.test.js                 # 跑单个测试文件
 cd console/backend && NODE_ENV=test node --test --test-name-pattern='关键词' test/*.test.js  # 按名字跑

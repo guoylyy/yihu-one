@@ -6,6 +6,10 @@ Release notes are kept in one place so the console can show them to users:
 [`console/docs/devcenter/releases.md`](console/docs/devcenter/releases.md) (served at `/dev/releases` on every installation).
 Integration-facing changes (APIs, SDK, manifest) are in [`console/docs/devcenter/changelog.md`](console/docs/devcenter/changelog.md).
 
+## 0.6.8 — 2026-10-30
+
+Apps can declare host directories in `yh-app.json` (`deploy.mounts`: `name`, `container`, `mode` defaulting to `ro`, `required`, `description`), so knowledge-base, backup and file-manager apps no longer need their data copied into the container. The manifest only declares that a directory is needed; the admin picks the actual path with `yh mount <code> <name> <host path>`, stored as `YH_MOUNT_<NAME>` in `apps/<code>/.env` and kept across restarts, rebuilds and deploys. Applying it recreates the container without rebuilding the image and reports the file count, since mounting the wrong directory is the likeliest mistake. `/`, the home directory, `~/.ssh`, `~/Library/Keychains`, the platform directory and any parent of those are refused (symlinks are resolved, and paths compare case-insensitively on macOS), and a manifest's `env` cannot set `YH_MOUNT_*`. New `yh render <code>` prints the compose file without Docker. `yh check` validates the declaration and warns when a mount is unconfigured; the console's app list shows each app's mount status and a command to copy. Apps without `mounts` render byte-for-byte as before. Adds the nullable `App.mounts` column (migration `20261030000000_app_mounts`, applied automatically when the console starts).
+
 ## 0.6.7 — 2026-10-28
 
 Patch release. The built-in assistant works with DeepSeek's thinking-mode models (e.g. `deepseek-v4-pro`). Thinking mode rejects the forced first tool call (`tool_choice: "required"`) with a 400; the assistant now retries once with `auto` when a 400 names `tool_choice`. Thinking mode also requires each tool-calling step's `reasoning_content` to be sent back, so it is now kept with the message and returned to the model that produced it. No database changes.

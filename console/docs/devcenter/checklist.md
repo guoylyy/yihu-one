@@ -3,7 +3,7 @@ title: 上线检查清单
 category: 入门
 order: 2
 summary: 应用插到平台上线前逐项核对
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # 上线检查清单
@@ -37,6 +37,7 @@ updated: 2026-10-29
 - [ ] 仓库根目录有 `yh-app.json` 和 `Dockerfile`，`/health` 免登录返回 200
 - [ ] 前端请求、链接都是相对路径，挂在 `/apps/<code>/` 下能正常用
 - [ ] 数据只写 `DATABASE_URL` 和 `/data`
+- [ ] 应用要读宿主目录 → 用 `deploy.mounts` 声明（默认只读，见 [应用部署规范 · 宿主目录挂载](/dev/deploy)），不要要求用户把数据拷进容器
 - [ ] 有 `release.sh`，`TEST_CMD` 是真实的测试命令
 
 ## 版本号显示（必须）

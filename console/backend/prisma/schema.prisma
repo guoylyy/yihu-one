@@ -160,6 +160,8 @@ model App {
   branch             String?      @db.VarChar(100)
   /// yh agent 上报的运行状态 { state, health, version（应用版本号）, commit, commitAt, deployedAt, memory, at }
   runtime            Json?
+  /// yh 上报的宿主目录挂载（清单 deploy.mounts + 当前配置）[{ name, container, mode, required, description, envKey, hostPath, configured, problem }]，只给管理员看
+  mounts             Json?
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   deletedAt          DateTime?

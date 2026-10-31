@@ -39,13 +39,14 @@ export function checkCode(code) {
  */
 export async function registerApp(b) {
   checkCode(b.code)
+  const mounts = mountsOf(b.mounts)
   if (!b.name || !b.url) throw badRequest('name、url 必填')
   const manifestIcon = validIcon(b.icon)
   const manifestIconColor = validColor(b.iconColor)
   const data = {
     name: b.name, icon: manifestIcon, iconColor: manifestIconColor, manifestIcon, manifestIconColor, category: b.category || null, description: b.description || null,
     type: 'SSO', url: b.url, redirectUris: b.redirectUris || [], mcpUrl: b.mcpUrl || null,
-    managed: true, source: b.source || null, branch: b.branch || null, status: 'ACTIVE', deletedAt: null
+    managed: true, source: b.source || null, branch: b.branch || null, status: 'ACTIVE', deletedAt: null, mounts
   }
   const existing = await prisma.app.findUnique({ where: { code: b.code } })
   // 应用接入规范 3.1：新接入的应用必须带版本号（缺失不能装）；存量应用不强制，更新时 yh 会提醒补上
@@ -90,7 +91,7 @@ export async function removeApp(code) {
 }
 
 /**
- * yh agent 定时上报各应用运行状态: [{ code, state, health, version, commit, commitAt, deployedAt, memory }]
+ * yh agent 定时上报各应用运行状态: [{ code, state, health, version, commit, commitAt, deployedAt, memory, mounts }]
  *   version 应用自己的版本号（清单 / package.json），commit 源码提交（Git 接入的才有），deployedAt 最近一次发布 / 重建
  */
 export function runtimeOf(r, at) {
@@ -102,12 +103,25 @@ export function runtimeOf(r, at) {
   return { state: str(r.state, 20), health: str(r.health, 40), version, commit, commitAt: str(r.commitAt, 40), deployedAt: str(r.deployedAt, 40), memory: str(r.memory, 40), at }
 }
 
+/**
+ * yh 上报的宿主目录挂载: 清单 deploy.mounts 的声明 + apps/<code>/.env 里的宿主路径
+ * 不是数组时返回 undefined, Prisma 不动这一列(老版本 yh 不报, 清单写错时 yh 报 null: 都保留原来的)
+ */
+export function mountsOf(list) {
+  if (!Array.isArray(list)) return undefined
+  const str = (v, n) => (typeof v === 'string' && v ? v.slice(0, n) : null)
+  return list.slice(0, 32).filter(m => str(m?.name, 32) && str(m?.container, 200)).map(m => ({
+    name: str(m.name, 32), container: str(m.container, 200), mode: m.mode === 'rw' ? 'rw' : 'ro', required: m.required === true,
+    description: str(m.description, 200), envKey: str(m.envKey, 50), hostPath: str(m.hostPath, 500), configured: m.configured === true, problem: str(m.problem, 300)
+  }))
+}
+
 export async function reportStatus(list) {
   if (!Array.isArray(list)) throw badRequest('需要数组')
   const at = new Date().toISOString()
   for (const r of list) {
     if (!CODE.test(r?.code || '')) continue
-    await prisma.app.updateMany({ where: { code: r.code, deletedAt: null }, data: { runtime: runtimeOf(r, at) } })
+    await prisma.app.updateMany({ where: { code: r.code, deletedAt: null }, data: { runtime: runtimeOf(r, at), mounts: mountsOf(r.mounts) } })
   }
   return { ok: true }
 }

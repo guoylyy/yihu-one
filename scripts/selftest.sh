@@ -4,6 +4,8 @@
 #   ./scripts/selftest.sh            跑完自动清理
 #   ./scripts/selftest.sh --keep     保留环境，用浏览器体验（结束后 ./scripts/selftest.sh --clean）
 #   ./scripts/selftest.sh --clean    清理 --keep 留下的环境
+#   ./scripts/selftest.sh --offline  只跑不需要 Docker 的用例（宿主目录挂载的渲染 + 校验，scripts/mount-test.sh）：
+#                                    已经部署了平台的机器上全流程会被拒绝，这部分照样能跑
 #
 # 不需要外网上的代码仓库：应用用模板生成，「从 Git 安装」和自动发布用本机裸仓库模拟
 # 注意：会占用容器名 yh-*、网络 yh-net、端口 18080。已经正式部署了平台的机器上不要跑（脚本会拒绝）。
@@ -42,8 +44,9 @@ clean() {
 case "${1:-}" in
   --keep) KEEP=1;;
   --clean) clean; exit 0;;
+  --offline) exec /bin/bash "$SRC_ROOT/scripts/mount-test.sh";;
   "") ;;
-  *) echo "用法：$0 [--keep | --clean]"; exit 1;;
+  *) echo "用法：$0 [--keep | --clean | --offline]"; exit 1;;
 esac
 
 # ---- 前置检查 ----
@@ -134,6 +137,9 @@ $YH new demo-py --from python --name "Python 演示" >> demo.log 2>&1 && $YH up 
 check "Python 模板：yh new + yh up" grep -q "Python 演示 已上线" demo.log
 HINT="/apps/demo-node 应 308 到 /apps/demo-node/"; check "路径路由：补斜杠" sh -c "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' '$B/apps/demo-node' | grep -q '^308 .*/apps/demo-node/\$'"
 HINT="应返回友好提示"; check "未上线的应用给出提示页" sh -c "curl -s $B/apps/nope/ | grep -q '还没上线'"
+
+title "3b. 宿主目录挂载：清单校验、yh render、路径规则、yh mount（不起容器，单独跑：--offline）"
+HINT="单独跑 ./scripts/mount-test.sh 看明细"; check "scripts/mount-test.sh" /bin/bash scripts/mount-test.sh
 
 title "4. 统一登录（从平台进入应用）"
 sso() { # sso <应用入口> <令牌> → 打印登录后页面

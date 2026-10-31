@@ -13,6 +13,10 @@
 #   yh up <code>                        上线 / 更新配置：建库 → 登记到控制台 → 构建 → 路由 → 健康检查（先跑一遍 yh check，只提示）
 #   yh check [应用目录|code] [--strict] 上架前静态自检：viewport、断点、写死宽度、表格降级、触控尺寸、版本号、/health；--strict 有 ❌ 时退出码非 0
 #   yh up console                       重新构建并重启控制台
+#   yh render <code>                    只把 compose.yml 打到标准输出（不构建、不启动、不需要 Docker），用来核对挂载等配置
+#   yh mount <code> [名称]              看应用声明的宿主目录挂载（清单 deploy.mounts）和当前配置
+#   yh mount <code> <名称> <宿主路径>   指定宿主目录并生效：写 .env → 重新渲染 compose → 重建容器（不重建镜像）
+#   yh mount <code> <名称> --clear      清除这个挂载
 #   yh update <code>                    拉最新代码后重新上线（git 应用：备份 → 上线 → 失败自动回滚 → 通知）
 #   yh upgrade [--check]                平台自身升级（用更新包安装的机器）：查新版本 / 下载并升级，先备份，失败自动回滚
 #   yh upgrade --package <更新包>       不能联网时：用拷进来的更新包升级
@@ -103,6 +107,10 @@ env_set() {
   printf '%s=%s\n' "$k" "$v" >> "$f"
   chmod 600 "$f"
 }
+env_del() { # env_del <文件> <键>
+  [ -f "$1" ] || return 0
+  grep -vE "^$2=" "$1" > "$1.tmp"; mv "$1.tmp" "$1"; chmod 600 "$1"
+}
 rand() { openssl rand -hex "${1:-24}"; }
 # 好念的初始密码：8 个字母 + 4 个数字
 rand_password() { printf '%s%s' "$(LC_ALL=C tr -dc 'a-km-zA-HJ-NP-Z' < /dev/urandom | head -c 8)" "$(LC_ALL=C tr -dc '2-9' < /dev/urandom | head -c 4)"; }
@@ -139,6 +147,167 @@ manifest() { # manifest <code> → 清单路径（apps/<code>/yh-app.json 优先
   else echo ""; fi
 }
 mf() { jq -r "$2 // empty" "$1"; } # mf <清单> <jq 路径>
+manifest_ok() { # manifest_ok <code> <清单路径>：上线、渲染、挂载共用的清单校验，不合格直接退出
+  [ -n "$2" ] || die "apps/$1 下没有应用清单；先 yh add 或 yh new"
+  jq empty "$2" 2>/dev/null || die "清单不是合法 JSON：$2"
+  [ -n "$(mf "$2" .name)" ] && [ -n "$(mf "$2" .port)" ] || die "清单缺少 name 或 port"
+  local cpus; cpus="$(mf "$2" .cpus)"
+  [ -z "$cpus" ] || echo "$cpus" | grep -qE '^[0-9]+(\.[0-9]+)?$' || die "清单里的 cpus 要是数字，如 0.5、1、2"
+}
+
+# ---------------------------------------------------------------- 宿主目录挂载（清单 deploy.mounts）
+# 清单只声明「要一个目录、挂到容器哪里」，挂宿主机上的哪个目录只由管理员决定：实际路径存在 apps/<code>/.env 的 YH_MOUNT_<NAME>，
+# yh mount 写入，cmd_up 不让清单的 env 改它（员工提交的清单是不可信输入）。没声明 mounts 的应用这里什么都不做
+MOUNT_SYS_RE='^/(proc|sys|dev|etc|usr|bin|sbin|lib|lib64|boot)(/|$)' # 容器里不能盖掉的系统目录
+MOUNT_UNHEALTHY=""
+
+mount_errors() { # mount_errors <清单>：deploy.mounts 写错的地方，一行一条；写对了不输出
+  jq -r --arg sys "$MOUNT_SYS_RE" '
+    def tag($i; $m): "deploy.mounts 第 \($i + 1) 项" + (if (($m | type) == "object" and ($m.name | type) == "string") then "（\($m.name)）" else "" end) + "：";
+    def item($m):
+      if ($m | type) != "object" then "要是对象"
+      else
+        (if (($m.name | type) == "string" and ($m.name | test("^[a-z][a-z0-9_]{0,31}$"))) then empty else "name 要是小写字母开头，只含小写字母、数字、下划线（1~32 位）" end),
+        (if (($m.container | type) != "string" or ($m.container | test("^(/[A-Za-z0-9._-]+)+$") | not) or ($m.container | test("/\\.\\.?(/|$)"))) then "container 要是 / 开头的容器内绝对路径（字母、数字、._-），末尾不带 /"
+         elif $m.container == "/data" then "container 不能是 /data（平台保留，挂 apps/<code>/data），可以用 /data/ 下面的子目录"
+         elif ($m.container | test($sys)) then "container 不能是容器的系统目录：\($m.container)"
+         else empty end),
+        (if ($m.mode // "ro") == "ro" or $m.mode == "rw" then empty else "mode 只能是 ro 或 rw" end),
+        (if ($m | has("required") | not) or ($m.required | type) == "boolean" then empty else "required 要是 true 或 false" end),
+        (if ($m | has("description") | not) or ($m.description | type) == "string" then empty else "description 要是字符串" end)
+      end;
+    (if (.deploy | type) == "object" then .deploy.mounts else null end) as $l
+    | if $l == null then empty
+      elif ($l | type) != "array" then "deploy.mounts 要是数组"
+      else
+        (range(0; $l | length) as $i | tag($i; $l[$i]) + item($l[$i])),
+        ([$l[] | objects | .name | strings] | group_by(.) | map(select(length > 1) | .[0]) | .[] | "deploy.mounts：name \(.) 重复"),
+        ([$l[] | objects | .container | strings] as $c
+          | ($c | group_by(.) | map(select(length > 1) | .[0]) | .[] | "deploy.mounts：容器路径 \(.) 重复"),
+            ($c[] as $a | $c[] as $b | select($b | startswith($a + "/")) | "deploy.mounts：容器路径 \($a) 和 \($b) 互相包含"))
+      end' "$1" 2>/dev/null || echo "deploy.mounts 解析失败（jq 版本太老？要 1.5 以上）"
+}
+mount_rows() { # mount_rows <清单>：名称 容器路径 模式 是否必需 说明，制表符分隔。先过 mount_errors
+  jq -r '(if (.deploy | type) == "object" then .deploy.mounts else null end) // [] | .[]
+    | [.name, .container, (.mode // "ro"), (.required == true | tostring), ((.description // "") | gsub("[\t\r\n]"; " "))] | join("\t")' "$1" 2>/dev/null
+}
+mount_key() { echo "YH_MOUNT_$(echo "$1" | tr 'a-z' 'A-Z')"; }
+mount_value() { # mount_value <.env> <键>：手写 .env 时可能带引号
+  local v; v="$(env_get "$1" "$2")"
+  case "$v" in \"*\") v="${v#\"}"; v="${v%\"}";; \'*\') v="${v#\'}"; v="${v%\'}";; esac
+  printf '%s' "$v"
+}
+mount_fold() { # 比较路径用：macOS 的文件系统不分大小写，~/.SSH 就是 ~/.ssh，pwd -P 还保留输入的写法
+  if [ "$(uname)" = "Darwin" ]; then printf '%s' "$1" | tr 'A-Z' 'a-z'; else printf '%s' "$1"; fi
+}
+mount_inside() { case "$2/" in "$1/"*) return 0;; esac; return 1; } # mount_inside <上级> <路径>：路径是上级本身或在它下面
+
+# 校验宿主路径：通过时 MOUNT_PATH 是解析掉符号链接后的真实路径（挂的就是校验过的这个），不通过时 MOUNT_ERR 说明原因
+mount_path() { # mount_path <路径>
+  local p="$1" home root real r h t kc
+  MOUNT_PATH=""; MOUNT_ERR=""
+  home="$(cd ~ 2>/dev/null && pwd -P)"; root="$(cd "$ROOT" && pwd -P)"
+  case "$p" in "~") p="$home";; "~/"*) p="$home/${p#\~/}";; esac
+  case "$p" in /*) ;; *) MOUNT_ERR="必须是绝对路径（/ 或 ~/ 开头）：$1"; return 1;; esac
+  if in_docker; then
+    # Docker 安装：yh 在容器里，看不到宿主机的目录，只能按字面检查（存在与否、符号链接都查不了）
+    case "$p/" in */../*|*/./*) MOUNT_ERR="路径里不能有 . 或 ..：$1"; return 1;; esac
+    real="$(printf '%s' "$p" | sed -E 's#/+#/#g; s#(.)/$#\1#')"
+  else
+    [ -e "$p" ] || { MOUNT_ERR="路径不存在：$p"; return 1; }
+    [ -d "$p" ] || { MOUNT_ERR="不是目录：$p"; return 1; }
+    real="$(cd "$p" 2>/dev/null && pwd -P)" || { MOUNT_ERR="进不去这个目录（权限不够？）：$p"; return 1; }
+  fi
+  # compose.yml 的短写法用冒号分段，.env 还要被 compose 解析（# 开始注释、$ 取变量）：这些字符写不进去
+  case "$real" in *[\"\\\$\`:#]*|*$'\n'*) MOUNT_ERR="路径里不能有 \" \\ \$ \` : # 或换行（compose 没法表示）：$real"; return 1;; esac
+  r="$(mount_fold "$real")"; h="$(mount_fold "$home")"; t="$(mount_fold "$root")"; kc="$(mount_fold "$home/Library/Keychains")"
+  [ "$r" != "/" ] || { MOUNT_ERR="不能挂根目录 /"; return 1; }
+  if [ -n "$h" ]; then
+    [ "$r" != "$h" ] || { MOUNT_ERR="不能挂用户主目录 $home 本身，指定到具体的子目录"; return 1; }
+    mount_inside "$h/.ssh" "$r" && { MOUNT_ERR="不能挂 SSH 密钥目录：$real"; return 1; }
+    mount_inside "$kc" "$r" && { MOUNT_ERR="不能挂钥匙串目录：$real"; return 1; }
+    # 上级目录一样不行：挂 /Users 或 ~/Library 等于把上面这些也挂进去了
+    mount_inside "$r" "$h/.ssh" && { MOUNT_ERR="这个目录包含 SSH 密钥（$home/.ssh），指定到具体的子目录：$real"; return 1; }
+    mount_inside "$r" "$kc" && { MOUNT_ERR="这个目录包含钥匙串（$home/Library/Keychains），指定到具体的子目录：$real"; return 1; }
+  fi
+  mount_inside "$t" "$r" && { MOUNT_ERR="不能挂平台自己的目录（$root 及其子目录）：$real"; return 1; }
+  mount_inside "$r" "$t" && { MOUNT_ERR="这个目录包含平台目录（${root}，里面有 yh.env 和各应用的密钥），指定到具体的子目录：$real"; return 1; }
+  MOUNT_PATH="$real"
+}
+
+# 读出应用的挂载配置，放在全局变量里，不退出，由调用方决定怎么报：
+#   MOUNT_MANIFEST 清单写错的地方；MOUNT_BAD 配了但路径不合格的；MOUNT_MISSING 必需但没配的名称；MOUNT_UNSET 可选没配的名称
+#   MOUNT_YAML compose 的 volumes 行；MOUNT_JSON 上报控制台的数组（清单写错时为 null，控制台保留原来的）
+mounts_load() { # mounts_load <code> <清单>
+  local code="$1" m="$2" envf="$APPS/$1/.env" rows name ctr mode req desc key raw real problem seen="" items=""
+  MOUNT_MANIFEST=""; MOUNT_BAD=""; MOUNT_MISSING=""; MOUNT_UNSET=""; MOUNT_YAML=""; MOUNT_JSON="[]"
+  MOUNT_MANIFEST="$(mount_errors "$m")"
+  [ -z "$MOUNT_MANIFEST" ] || { MOUNT_JSON="null"; return 0; }
+  rows="$(mount_rows "$m")"; [ -n "$rows" ] || return 0
+  while IFS=$'\t' read -r name ctr mode req desc; do
+    key="$(mount_key "$name")"; raw="$(mount_value "$envf" "$key")"; real=""; problem=""
+    if [ -z "$raw" ]; then
+      if [ "$req" = "true" ]; then MOUNT_MISSING="$MOUNT_MISSING $name"; else MOUNT_UNSET="$MOUNT_UNSET $name"; fi
+    elif ! mount_path "$raw"; then
+      problem="$MOUNT_ERR"
+    else
+      real="$MOUNT_PATH"
+      case "$seen" in *"|$(mount_fold "$real")|"*) problem="宿主路径 $real 重复挂到了同一个容器";; esac
+      seen="$seen|$(mount_fold "$real")|"
+      [ -n "$problem" ] || MOUNT_YAML="$MOUNT_YAML${MOUNT_YAML:+$'\n'}      - \"$real:$ctr:$mode\""
+    fi
+    [ -z "$problem" ] || MOUNT_BAD="$MOUNT_BAD${MOUNT_BAD:+$'\n'}${name}（${key}）：$problem"
+    items="$items,$(jq -cn --arg n "$name" --arg c "$ctr" --arg o "$mode" --arg r "$req" --arg d "$desc" --arg k "$key" --arg h "${real:-$raw}" --arg p "$problem" \
+      '{name:$n, container:$c, mode:$o, required:($r == "true"), description:$d, envKey:$k, hostPath:(if $h == "" then null else $h end), configured:($h != "" and $p == ""), problem:(if $p == "" then null else $p end)}')"
+  done <<EOF
+$rows
+EOF
+  MOUNT_JSON="[${items#,}]"
+}
+mounts_require_valid() { # 清单写错、路径不合格：不进行任何改动就退出
+  [ -z "$MOUNT_MANIFEST" ] || die "清单的 deploy.mounts 写错了：$(echo "$MOUNT_MANIFEST" | tr '\n' '；')"
+  [ -z "$MOUNT_BAD" ] || die "宿主目录配置不合格：$(echo "$MOUNT_BAD" | tr '\n' '；')"
+}
+mounts_require_set() { # mounts_require_set <code>
+  local n cmds=""
+  [ -n "$MOUNT_MISSING" ] || return 0
+  for n in $MOUNT_MISSING; do cmds="$cmds${cmds:+；}yh mount $1 $n <宿主路径>"; done
+  die "应用声明了必需的宿主目录$(echo "$MOUNT_MISSING" | sed 's/ /、/g; s/^、/ /')，先执行：$cmds"
+}
+mounts_unset_hint() { # mounts_unset_hint <code>：可选挂载没配，打到日志末尾（控制台安装时管理员看的就是这份日志）
+  local n
+  for n in $MOUNT_UNSET; do red "⚠️ 宿主目录 $n 未配置（可选，这次没挂）：yh mount $1 $n <宿主路径>"; done
+  return 0
+}
+
+# compose.yml：只有 mounts 那几行是新增的，没声明 mounts 的应用输出和以前逐字节一致
+render_compose() { # render_compose <code> <清单>。先调 mounts_load
+  local code="$1" m="$2" image memory cpus
+  image="$(mf "$m" .image)"; memory="$(mf "$m" .memory)"; cpus="$(mf "$m" .cpus)"
+  memory="${memory:-256m}"; cpus="${cpus:-1.0}"
+  echo "# yh 生成，勿手改（改 yh-app.json 后重新 yh up ${code}）"
+  echo "name: yh-$code"
+  echo "services:"
+  echo "  app:"
+  if [ -n "$image" ]; then echo "    image: $image"; else
+    echo "    build: ./src"
+    echo "    image: yh-app-$code:latest"
+  fi
+  echo "    container_name: yh-$code"
+  echo "    restart: unless-stopped"
+  echo "    env_file: .env"
+  echo "    volumes:"
+  echo "      - ./data:/data"
+  if [ -n "$MOUNT_YAML" ]; then printf '%s\n' "$MOUNT_YAML"; fi
+  echo "    networks: [$(app_net "$code")]"
+  echo "    mem_limit: $memory"
+  echo "    cpus: $cpus"
+  echo "    pids_limit: 512"
+  echo "    security_opt: [no-new-privileges:true]"
+  echo "networks:"
+  echo "  $(app_net "$code"):"
+  echo "    external: true"
+}
 
 mysql_root() { docker exec -i yh-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$@" 2>/dev/null; }
 
@@ -648,6 +817,28 @@ ck_rel() { # ck_rel <文件清单> <目录>：相对路径，最多列 3 个
   echo "$out"
 }
 
+check_mounts() { # check_mounts <清单>
+  local m="$1" code n line total
+  code="$(mf "$m" .code)"; echo "$code" | grep -qE '^[a-z][a-z0-9-]{1,30}$' || code="_"
+  mounts_load "$code" "$m"
+  if [ -n "$MOUNT_MANIFEST" ]; then
+    while IFS= read -r line; do ck_item fail "宿主目录挂载" "$line"; done <<EOF
+$MOUNT_MANIFEST
+EOF
+    return 0
+  fi
+  total="$(mount_rows "$m" | grep -c .)"
+  [ "$total" -gt 0 ] || return 0
+  if [ -n "$MOUNT_BAD" ]; then
+    while IFS= read -r line; do ck_item fail "宿主目录挂载" "$line"; done <<EOF
+$MOUNT_BAD
+EOF
+  fi
+  for n in $MOUNT_MISSING; do ck_item warn "宿主目录挂载" "$n 未配置（必需，yh up 会拒绝）：yh mount $code $n <宿主路径>"; done
+  for n in $MOUNT_UNSET; do ck_item warn "宿主目录挂载" "$n 未配置（可选，不配就不挂）：yh mount $code $n <宿主路径>"; done
+  [ -n "$MOUNT_BAD$MOUNT_MISSING$MOUNT_UNSET" ] || ck_item ok "宿主目录挂载" "$total 个已配置"
+}
+
 check_app() { # check_app <源码目录> [清单路径]：逐项输出，有 ❌ 时返回 1
   local dir="${1%/}" m="${2:-}" lim="${YH_CHECK_FIXED_WIDTH:-900}" tmp f n v h
   CK_OK=0; CK_WARN=0; CK_FAIL=0; CK_SKIP=0
@@ -750,7 +941,10 @@ check_app() { # check_app <源码目录> [清单路径]：逐项输出，有 ❌
     else ck_item warn "版本号" "yh-app.json version=${v}，建议用语义化版本 x.y.z"; fi
   fi
 
-  # 7. 健康检查：上线时 yh up 会实际请求一次（app_http），这里先在源码里找路由，没起服务也能发现
+  # 7. 宿主目录挂载：只有声明了才查（没声明的应用输出和以前一样）。没配置给 ⚠️ 不算错：可选的允许不配，必需的在 yh up 时拒绝
+  if [ -n "$m" ] && [ -f "$m" ] && jq empty "$m" 2>/dev/null; then check_mounts "$m"; fi
+
+  # 8. 健康检查：上线时 yh up 会实际请求一次（app_http），这里先在源码里找路由，没起服务也能发现
   if [ -f "$dir/Dockerfile" ]; then
     h=""; [ -n "$m" ] && [ -f "$m" ] && h="$(mf "$m" .health 2>/dev/null)"; h="${h:-/health}"
     : > "$tmp/health"
@@ -805,15 +999,12 @@ cmd_up() {
   if [ "$code" = "console" ]; then cmd_start_platform --build; return; fi
   valid_code "$code"; load_env
   local dir="$APPS/$code" m
-  m="$(manifest "$code")"; [ -n "$m" ] || die "apps/$code 下没有应用清单；先 yh add 或 yh new"
-  jq empty "$m" 2>/dev/null || die "清单不是合法 JSON：$m"
-  local name port health callback entry mcp memory cpus image dbwanted url
+  m="$(manifest "$code")"; manifest_ok "$code" "$m"
+  local name port health callback entry mcp dbwanted url
   name="$(mf "$m" .name)"; port="$(mf "$m" .port)"; health="$(mf "$m" .health)"; callback="$(mf "$m" .callback)"
-  entry="$(mf "$m" .entry)"; mcp="$(mf "$m" .mcp)"; memory="$(mf "$m" .memory)"; image="$(mf "$m" .image)"
-  dbwanted="$(mf "$m" .database)"; cpus="$(mf "$m" .cpus)"
-  [ -n "$name" ] && [ -n "$port" ] || die "清单缺少 name 或 port"
-  health="${health:-/health}"; callback="${callback:-/sso/callback}"; entry="${entry:-/}"; memory="${memory:-256m}"; cpus="${cpus:-1.0}"
-  echo "$cpus" | grep -qE '^[0-9]+(\.[0-9]+)?$' || die "清单里的 cpus 要是数字，如 0.5、1、2"
+  entry="$(mf "$m" .entry)"; mcp="$(mf "$m" .mcp)"; dbwanted="$(mf "$m" .database)"
+  health="${health:-/health}"; callback="${callback:-/sso/callback}"; entry="${entry:-/}"
+  mounts_load "$code" "$m"; mounts_require_valid
   url="$(app_url "$code")"
   local envf="$dir/.env" bp; bp="$(app_base "$code")"
   mkdir -p "$dir/data"
@@ -839,7 +1030,10 @@ cmd_up() {
   # 测试模式用 staging：应用照常运行，但知道自己不在生产（不发真实通知等）
   if is_test; then env_set "$envf" NODE_ENV "staging"; else env_set "$envf" NODE_ENV "production"; fi
   local k
-  for k in $(jq -r '.env // {} | keys[]' "$m"); do env_set "$envf" "$k" "$(jq -r --arg k "$k" '.env[$k]' "$m")"; done
+  for k in $(jq -r '.env // {} | keys[]' "$m"); do
+    case "$k" in YH_MOUNT_*) red "  清单 env 里的 $k 已忽略：挂哪个宿主目录由管理员用 yh mount 指定"; continue;; esac
+    env_set "$envf" "$k" "$(jq -r --arg k "$k" '.env[$k]' "$m")"
+  done
 
   # 3. 登记到控制台，领统一认证凭证
   console_ok || die "控制台不可用，先 yh start；日志：yh logs console"
@@ -852,10 +1046,10 @@ cmd_up() {
   local body resp secret icondata
   icondata="$(manifest_icon_file "$m")"
   body="$(jq -n --argjson m "$(cat "$m")" --arg url "$url$entry" --arg cb "$url$callback" --argjson mcp "$mcpurl" --argjson reset "$reset" \
-    --arg src "$src" --arg branch "$branch" --arg icondata "$icondata" \
+    --arg src "$src" --arg branch "$branch" --arg icondata "$icondata" --argjson mounts "$MOUNT_JSON" \
     '{code:$m.code, name:$m.name, icon:(if $icondata == "" then $m.icon else $icondata end), iconColor:$m.iconColor, category:$m.category, description:$m.description,
       url:$url, redirectUris:[$cb], mcpUrl:$mcp, version:($m.version // null), visibility:$m.visibility, isDefault:($m.isDefault // false),
-      source:$src, branch:(if $branch == "" then null else $branch end), resetSecret:$reset}')"
+      source:$src, branch:(if $branch == "" then null else $branch end), resetSecret:$reset, mounts:$mounts}')"
   resp="$(platform_api POST /api/platform/apps/register -H 'Content-Type: application/json' -d "$body")"
   [ "$(echo "$resp" | jq -r .code 2>/dev/null)" = "0" ] || die "登记失败：$resp"
   secret="$(echo "$resp" | jq -r '.data.clientSecret // empty')"
@@ -868,30 +1062,11 @@ cmd_up() {
   env_set "$envf" YH_API_URL "http://yh-console:$CONSOLE_PORT"
   green "  已登记到控制台$( [ -n "$secret" ] && echo '，统一认证凭证已写入 .env')"
 
-  # 4. 容器
-  {
-    echo "# yh 生成，勿手改（改 yh-app.json 后重新 yh up ${code}）"
-    echo "name: yh-$code"
-    echo "services:"
-    echo "  app:"
-    if [ -n "$image" ]; then echo "    image: $image"; else
-      echo "    build: ./src"
-      echo "    image: yh-app-$code:latest"
-    fi
-    echo "    container_name: yh-$code"
-    echo "    restart: unless-stopped"
-    echo "    env_file: .env"
-    echo "    volumes:"
-    echo "      - ./data:/data"
-    echo "    networks: [$(app_net "$code")]"
-    echo "    mem_limit: $memory"
-    echo "    cpus: $cpus"
-    echo "    pids_limit: 512"
-    echo "    security_opt: [no-new-privileges:true]"
-    echo "networks:"
-    echo "  $(app_net "$code"):"
-    echo "    external: true"
-  } > "$dir/compose.yml"
+  # 4. 容器。必需的挂载没配放在登记之后才拒绝：控制台要先知道这个应用缺什么（列表标红、给出命令），
+  # 控制台安装的应用也算已登记，不会被清理掉，管理员才有机会 yh mount
+  if [ -n "$MOUNT_MISSING" ]; then cp "$m" "$dir/.mounts-pending.json"; mounts_require_set "$code"; fi
+  rm -f "$dir/.mounts-pending.json"
+  render_compose "$code" "$m" > "$dir/compose.yml"
   ensure_app_net "$code"
   step "构建并启动容器"
   local out; out="$(docker compose -f "$dir/compose.yml" up -d --build 2>&1)"
@@ -934,6 +1109,143 @@ EOF
   fi
   echo
   green "✅ $name 已上线：$url/"
+  mounts_unset_hint "$code"
+}
+
+# ---------------------------------------------------------------- render / mount
+cmd_render() { # 标准输出只放 compose，报错、提示都走 stderr，可以直接 > 文件或 diff
+  exec 3>&1 1>&2
+  local code="${1:-}" m
+  valid_code "$code"
+  m="$(manifest "$code")"; manifest_ok "$code" "$m"
+  mounts_load "$code" "$m"; mounts_require_valid; mounts_require_set "$code"
+  mounts_unset_hint "$code"
+  render_compose "$code" "$m" >&3
+}
+
+mount_mode_text() { if [ "$1" = "rw" ]; then echo "读写"; else echo "只读"; fi; }
+mount_restore() { if [ -n "$3" ]; then env_set "$1" "$2" "$3"; else env_del "$1" "$2"; fi; } # mount_restore <.env> <键> <原值>：改之前是空的就删掉
+mount_list() { # mount_list <code> <清单> [名称]
+  local code="$1" m="$2" only="${3:-}" envf="$APPS/$1/.env" rows name ctr mode req desc key raw n=0
+  rows="$(mount_rows "$m")"
+  if [ -z "$rows" ]; then gray "$code 的清单没有声明宿主目录挂载（deploy.mounts）"; return 0; fi
+  while IFS=$'\t' read -r name ctr mode req desc; do
+    [ -z "$only" ] || [ "$only" = "$name" ] || continue
+    n=$((n + 1)); key="$(mount_key "$name")"; raw="$(mount_value "$envf" "$key")"
+    printf '%s → %s（%s，%s）\n' "$name" "$ctr" "$(mount_mode_text "$mode")" "$([ "$req" = "true" ] && echo 必需 || echo 可选)"
+    [ -z "$desc" ] || gray "  $desc"
+    if [ -z "$raw" ]; then red "  未配置：yh mount $code $name <宿主路径>"
+    elif mount_path "$raw"; then green "  $key=$MOUNT_PATH"
+    else red "  $key=${raw}，不可用：$MOUNT_ERR"; fi
+  done <<EOF
+$rows
+EOF
+  [ "$n" -gt 0 ] || die "$code 的清单没有声明 ${only}（有：$(echo "$rows" | cut -f1 | tr '\n' ' ')）"
+}
+
+# 容器真正看到的和宿主机一致吗：Docker 跑在虚拟机里时（colima、Docker Desktop），没共享给虚拟机的目录挂进去是空的，不报错
+mount_verify() { # mount_verify <code> <宿主路径> <容器路径>
+  local seen; seen="$(docker exec "yh-$1" ls -A "$3" 2>/dev/null)" || return 0
+  [ -n "$seen" ] || [ -z "$(ls -A "$2" 2>/dev/null)" ] || \
+    red "⚠️ 宿主目录里有文件，容器里 $3 却是空的：Docker 没拿到这个目录，检查 Docker Desktop / colima 的文件共享设置"
+  return 0
+}
+
+# 按当前配置重新渲染 compose、让容器生效（不重建镜像）。失败返回 1，调用方恢复配置
+mount_apply() { # mount_apply <code> <清单>
+  local code="$1" m="$2" dir="$APPS/$1" before after out
+  if [ ! -f "$dir/compose.yml" ]; then
+    gray "  应用还没上线过（之前缺这个目录被拒），接着上线"
+    ( cmd_up "$code" ); return $?
+  fi
+  render_compose "$code" "$m" > "$dir/compose.yml.tmp" && mv "$dir/compose.yml.tmp" "$dir/compose.yml"
+  if [ -f "$dir/.stopped" ]; then gray "  应用已停用，容器没动：yh up $code 恢复时生效"; return 0; fi
+  before="$(docker inspect -f '{{.Id}}' "yh-$code" 2>/dev/null)"
+  out="$(docker compose -f "$dir/compose.yml" up -d 2>&1)" || { echo "$out" | nocolor | tail -20 | sed 's/^/    /'; return 1; }
+  after="$(docker inspect -f '{{.Id}}' "yh-$code" 2>/dev/null)"
+  if [ "$before" = "$after" ]; then gray "  容器：配置没变，没有重启"; return 0; fi
+  green "  容器：已重建并重启 yh-${code}（没有重建镜像）"
+  health_ok "$code" 30 && return 0
+  # 起不来（典型：镜像入口 chown -R /data，碰到 /data 下的只读挂载直接退出）算失败，调用方恢复配置；还在运行只是没通过，留给管理员看
+  local st; st="$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "yh-$code" 2>/dev/null)"
+  if [ "$st" != "running 0" ]; then
+    docker logs --tail 8 "yh-$code" 2>&1 | sed 's/^/    /'
+    red "  容器起不来（${st:-不存在}）"
+    return 1
+  fi
+  MOUNT_UNHEALTHY=1
+  red "  容器在运行，但健康检查 30 秒内没通过：yh logs $code"
+}
+
+cmd_mount() {
+  [ $# -le 3 ] || die "参数太多：路径里有空格要加引号，如 yh mount <code> <名称> \"/路径/带 空格\""
+  local code="${1:-}" name="${2:-}" value="${3:-}"
+  valid_code "$code"
+  [ -d "$APPS/$code" ] || die "没有应用 $code"
+  local m; m="$(manifest "$code")"; manifest_ok "$code" "$m"
+  local errs; errs="$(mount_errors "$m")"
+  [ -z "$errs" ] || die "清单的 deploy.mounts 写错了：$(echo "$errs" | tr '\n' '；')"
+  if [ -z "$value" ]; then mount_list "$code" "$m" "$name"; return; fi
+
+  # 发布失败回滚后，当前清单是旧版本的，新版本要的目录要到它的清单里找（.mounts-pending.json 是上线被拒时存下的）
+  local dir="$APPS/$code" envf="$APPS/$code/.env" src="$m" row ctr mode req pending=0
+  row="$(mount_rows "$m" | awk -F'\t' -v n="$name" '$1 == n')"
+  if [ -z "$row" ] && [ -f "$dir/.mounts-pending.json" ]; then
+    src="$dir/.mounts-pending.json"; pending=1
+    row="$(mount_rows "$src" | awk -F'\t' -v n="$name" '$1 == n')"
+  fi
+  [ -n "$row" ] || die "$code 的清单没有声明 ${name}（有：$(mount_rows "$m" | cut -f1 | tr '\n' ' ')）"
+  ctr="$(echo "$row" | cut -f2)"; mode="$(echo "$row" | cut -f3)"; req="$(echo "$row" | cut -f4)"
+  local key old files; key="$(mount_key "$name")"; old="$(mount_value "$envf" "$key")"
+
+  load_env
+  deploy_lock || die "另一个发布正在进行，稍后再试"
+  if [ "$value" = "--clear" ]; then
+    [ -n "$old" ] || { gray "$key 本来就没配置"; return 0; }
+    env_del "$envf" "$key"
+    if [ "$req" = "true" ] || [ "$pending" = 1 ]; then
+      red "已清除 ${key}。$name 是必需的：容器没动，还在用原来的目录；再 yh up 会被拒绝。要立刻断开：yh down $code"
+    else
+      mounts_load "$code" "$m"; mounts_require_valid; mounts_require_set "$code"
+      mount_apply "$code" "$m" || die "容器没能按新配置启动：yh logs $code"
+      green "已清除 ${key}，容器里不再有 $ctr"
+    fi
+    console_ok && report_status
+    return 0
+  fi
+
+  mount_path "$value" || die "$MOUNT_ERR"
+  local real="$MOUNT_PATH"
+  env_set "$envf" "$key" "$real"
+  mounts_load "$code" "$src"
+  if [ -n "$MOUNT_BAD" ]; then
+    mount_restore "$envf" "$key" "$old"
+    die "宿主目录配置不合格：$(echo "$MOUNT_BAD" | tr '\n' '；')"
+  fi
+  files="$(find "$real" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  step "${code} · 宿主目录 $name"
+  echo "  变量：${key}（apps/$code/.env）"
+  echo "  宿主：$real"
+  echo "  容器：${ctr}（$(mount_mode_text "$mode")）"
+  in_docker || echo "  文件：$files 个（挂错目录是最常见的失误，确认一下数量对不对）"
+  [ "$files" != "0" ] || in_docker || red "  这个目录里没有文件，确认没挂错"
+  [ -d "$real" ] || gray "  Docker 安装看不到宿主机目录，没法确认它存在：路径写错时 Docker 会建一个空目录"
+  if [ "$pending" = 1 ]; then
+    green "✅ 已保存。当前运行的版本没有声明 ${name}，容器没动；重新发布后生效：yh update $code"
+  elif [ -n "$MOUNT_MISSING" ]; then
+    green "✅ 已保存，容器没动。还差必需的目录：$(echo "$MOUNT_MISSING" | sed 's/^ //; s/ /、/g')（配齐后才会生效）"
+  elif mount_apply "$code" "$m"; then
+    if [ -f "$dir/.stopped" ]; then :; else mount_verify "$code" "$real" "$ctr"; fi
+    if [ -n "$MOUNT_UNHEALTHY" ]; then red "⚠️ 挂载已生效，但应用不健康"; else green "✅ 已生效"; fi
+  else
+    red "✗ 容器没能按新配置启动，恢复原来的配置"
+    mount_restore "$envf" "$key" "$old"
+    mounts_load "$code" "$m"
+    if [ -z "$MOUNT_MISSING" ] && [ -f "$dir/compose.yml" ]; then render_compose "$code" "$m" > "$dir/compose.yml"; docker compose -f "$dir/compose.yml" up -d >/dev/null 2>&1; fi
+    die "没有改动。排查：yh logs ${code}，或手动 docker compose -f apps/$code/compose.yml up -d 看报错"
+  fi
+  console_ok && report_status
+  return 0
 }
 
 # ---------------------------------------------------------------- update / down / remove / restart / logs
@@ -1545,7 +1857,7 @@ app_version() { # app_version <code>
 
 # 各应用运行状态 → JSON 数组
 status_json() {
-  local d c m st hc ver commit commitAt deployedAt mem stats="" out="[" sep=""
+  local d c m st hc ver commit commitAt deployedAt mem mj stats="" out="[" sep=""
   stats="$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null)"
   for d in "$APPS"/*/; do
     [ -d "$d" ] || continue
@@ -1567,8 +1879,10 @@ status_json() {
     # 容器创建时间 = 最近一次发布 / 重建的时间
     deployedAt="$(docker inspect -f '{{.Created}}' "yh-$c" 2>/dev/null)"
     mem="$(echo "$stats" | awk -v n="yh-$c" '$1==n {print $2}')"
-    out="$out$sep$(jq -cn --arg c "$c" --arg s "$st" --arg h "$hc" --arg v "$ver" --arg mem "$mem" --arg cm "$commit" --arg ca "$commitAt" --arg da "$deployedAt" \
-      '{code:$c, state:$s, health:$h, version:$v, commit:$cm, commitAt:$ca, deployedAt:$da, memory:$mem}')"
+    # 挂载配置也跟着报：yh mount、手改 .env、目录被删了，控制台的标签 30 秒内都能跟上，不用等下一次 yh up
+    mounts_load "$c" "$m"; mj="$MOUNT_JSON"
+    out="$out$sep$(jq -cn --arg c "$c" --arg s "$st" --arg h "$hc" --arg v "$ver" --arg mem "$mem" --arg cm "$commit" --arg ca "$commitAt" --arg da "$deployedAt" --argjson mj "$mj" \
+      '{code:$c, state:$s, health:$h, version:$v, commit:$cm, commitAt:$ca, deployedAt:$da, memory:$mem, mounts:$mj}')"
     sep=","
   done
   echo "$out]"
@@ -1984,6 +2298,8 @@ case "$cmd" in
   check) cmd_check "$@";;
   add) cmd_add "$@";;
   up) cmd_up "$@";;
+  render) cmd_render "$@";;
+  mount) cmd_mount "$@";;
   update) cmd_update "${1:-}" 手动;;
   down) cmd_down "$@";;
   remove) cmd_remove "$@";;

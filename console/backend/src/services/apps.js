@@ -130,7 +130,7 @@ function adminDto(a, owners) {
     type: a.type, url: a.url, redirectUris: a.redirectUris || [], mcpUrl: a.mcpUrl, visibility: a.visibility,
     isDefault: a.isDefault, status: a.status, sort: a.sort,
     spaceId: a.spaceId ?? 1, extraSpaceIds: Array.isArray(a.extraSpaceIds) ? a.extraSpaceIds : [],
-    managed: a.managed, source: a.source, branch: a.branch, runtime: a.runtime,
+    managed: a.managed, source: a.source, branch: a.branch, runtime: a.runtime, mounts: Array.isArray(a.mounts) ? a.mounts : [],
     clientId: a.type === 'SSO' ? a.code : null, hasSecret: !!a.clientSecretHash,
     llmDailyTokenLimit: a.llmDailyTokenLimit ?? null,
     owner: a.ownerId ? owners.get(a.ownerId) || null : null, createdAt: a.createdAt,

@@ -69,6 +69,9 @@
               <template v-if="busyOf(row)">{{ OP_KIND[busyOf(row).kind] }}{{ busyOf(row).status === 'PENDING' ? '排队中' : '中…' }}</template>
               <template v-else>{{ [row.branch && `跟踪 ${row.branch}`, row.runtime?.memory && `内存 ${row.runtime.memory}`].filter(Boolean).join(' · ') }}</template>
             </div>
+            <el-tag v-if="row.mounts?.length" class="mount-tag" size="small" effect="plain" :type="mountsUnset(row).length ? 'danger' : 'info'" title="宿主目录挂载：点开看配置和命令" @click="openHistory(row)">
+              {{ mountsUnset(row).length ? `挂载 ${mountsUnset(row).length} 未配置` : `挂载 ${row.mounts.length} 已配置` }}
+            </el-tag>
           </template>
           <span v-else class="yh-muted small yh-ellipsis" :title="row.url">{{ row.url }}</span>
         </template>
@@ -142,6 +145,22 @@
     <!-- 操作与发布记录 -->
     <el-drawer v-model="hist.visible" :title="`${hist.app?.name || ''} · 操作与发布记录`" size="560px">
       <div v-loading="hist.loading">
+        <!-- 配置在宿主机上做（yh mount），控制台只显示 yh 上报的状态 -->
+        <template v-if="hist.app?.mounts?.length">
+          <div class="sec-title">宿主目录挂载 <span class="yh-muted small">（在宿主机的平台目录里执行命令配置）</span></div>
+          <div v-for="m in hist.app.mounts" :key="m.name" class="mount">
+            <div class="yh-flex">
+              <b>{{ m.name }}</b>
+              <span class="yh-grow yh-muted small">→ {{ m.container }} · {{ m.mode === 'rw' ? '读写' : '只读' }} · {{ m.required ? '必需' : '可选' }}</span>
+              <el-tag size="small" effect="plain" :type="m.configured ? 'info' : 'danger'">{{ m.configured ? '已配置' : '未配置' }}</el-tag>
+            </div>
+            <div v-if="m.description" class="yh-muted small">{{ m.description }}</div>
+            <div class="small mount-path">{{ m.hostPath || '还没有指定宿主路径' }}</div>
+            <div v-if="m.problem" class="small danger">{{ m.problem }}</div>
+            <div class="cred-row"><code>{{ mountCmd(hist.app, m) }}</code><el-button size="small" @click="copy(mountCmd(hist.app, m))">复制</el-button></div>
+          </div>
+          <div style="margin-bottom: 20px"></div>
+        </template>
         <div class="sec-title">控制台操作</div>
         <div v-if="!hist.ops.length" class="yh-empty small">暂无</div>
         <div v-for="o in hist.ops" :key="o.id" class="hist-row" @click="showLog(o, hist.app)">
@@ -320,6 +339,8 @@ async function load(silent = false) {
   }
 }
 const busyOf = row => activeOps.value.find(o => o.appCode === row.code)
+const mountsUnset = row => (row.mounts || []).filter(m => !m.configured)
+const mountCmd = (row, m) => `yh mount ${row.code} ${m.name} ${m.configured ? `"${m.hostPath}"` : '<宿主路径>'}`
 
 function runClass(row) {
   const r = row.runtime
@@ -625,6 +646,9 @@ onBeforeUnmount(() => clearTimeout(timer))
 @keyframes blink { 50% { opacity: .3; } }
 .app-ver { font-weight: 600; font-variant-numeric: tabular-nums; }
 .ver { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--yh-text-3); background: var(--yh-fill-2); padding: 0 5px; border-radius: 4px; }
+.mount-tag { margin-top: 4px; cursor: pointer; }
+.mount { display: flex; flex-direction: column; gap: 4px; padding: 10px; margin-bottom: 8px; background: var(--yh-fill); border-radius: 8px; font-size: 13px; }
+.mount-path { word-break: break-all; }
 .vis-box { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px; background: var(--yh-fill); border-radius: 8px; }
 .sec-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
 .hist-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
