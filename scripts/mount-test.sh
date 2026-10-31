@@ -228,6 +228,36 @@ setenv chk YH_MOUNT_LIBRARY "/"
 run check chk --strict
 [ "$rc" != 0 ] && said "❌ 宿主目录挂载" && ok "配了但不合格：❌" || ng "配了但不合格：❌" "$out"
 
+title "6b. yh check：服务端模板"
+page() { mkdir -p "$(dirname "$I/apps/$1/src/$2")"; printf '%s\n' "$3" > "$I/apps/$1/src/$2"; } # page <code> <相对路径> <内容>
+VP='<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+new_app njk; page njk views/layout.njk "$VP"
+run check njk
+said "✅ viewport meta" && said "views/layout.njk" && ok "只有 layout.njk 也算页面，viewport 能识别" || ng "只有 layout.njk 也算页面，viewport 能识别" "$out"
+new_app novp; page novp views/layout.njk '<title>{{ title }}</title>'
+run check novp --strict
+[ "$rc" != 0 ] && said "❌ viewport meta" && ok "模板里确实没有 viewport：仍是 ❌" || ng "模板里确实没有 viewport：仍是 ❌" "$out"
+new_app headjs; page headjs src/head.js "module.exports = '<link rel=\"icon\" href=\"data:,\">'"
+run check headjs --strict
+[ "$rc" != 0 ] && said "❌ viewport meta" && ok "脚本里只有 <link> 也算页面" || ng "脚本里只有 <link> 也算页面" "$out"
+new_app frag; page frag views/index.ejs "$VP"; page frag src/markdown.js "export const t = '<table>'"; page frag test/parse.test.js "assert.match(html, /<table>/)"
+run check frag
+said "✅ 表格降级" && said "没有表格" && ok "脚本里的 <table> 片段不算表格" || ng "脚本里的 <table> 片段不算表格" "$out"
+new_app tbl; page tbl views/list.ejs "$VP<table></table>"
+run check tbl
+said "⚠️ 表格降级" && said "views/list.ejs 有表格" && ok "模板里的表格要查降级" || ng "模板里的表格要查降级" "$out"
+new_app inline; page inline server.js "res.send(\`<!doctype html><html>$VP<table></table></html>\`)"
+run check inline
+said "⚠️ 表格降级" && said "server.js 有表格" && ok "脚本拼的整张页面（脚手架写法）里的表格要查降级" || ng "脚本拼的整张页面（脚手架写法）里的表格要查降级" "$out"
+new_app phpapp; page phpapp index.php "$VP"; page phpapp Dockerfile 'FROM php'; page phpapp routes.php "\$r->get('/health', fn () => 'ok');"
+run check phpapp
+said "✅ 健康检查" && ok ".php 算页面后健康检查路由仍能找到" || ng ".php 算页面后健康检查路由仍能找到" "$out"
+new_app tap; page tap views/index.ejs "$VP"; page tap app.css '.icon-btn svg { width: 22px; height: 22px; }
+.icon-btn span { height: 20px; }
+.btn { min-height: 38px; }'
+run check tap
+said "1 处按钮" && said "min-height: 38px" && ! said "22px" && ok "按钮里的图标不算点击目标，按钮本身照查" || ng "按钮里的图标不算点击目标，按钮本身照查" "$out"
+
 title "7. yh mount"
 mounts km "[$LIB]"
 : > "$SHIM/docker.log"; : > "$SHIM/curl.log"

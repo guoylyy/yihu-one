@@ -228,11 +228,11 @@ yh check · purchase
 
 | 检查项 | 怎么判断 | 不通过 |
 | --- | --- | --- |
-| viewport meta | 页面里有 `<meta name="viewport">` 且带 `viewport-fit=cover` | ❌ |
+| viewport meta | 页面里有 `<meta name="viewport">` 且带 `viewport-fit=cover`。页面文件包括 `.html` / `.vue` / `.svelte`、`.jsx` / `.tsx`、`.php`、服务端模板（`.ejs` / `.njk` / `.hbs` / `.pug` / `.twig` / `.liquid` / `.erb` / `.cshtml` / `.razor` 等），以及带 HTML 的脚本 | ❌ |
 | 响应式断点 | 有 `@media (max-width…)` / `(min-width…)`，或用了 `matchMedia` / `useViewport` | ⚠️ |
 | 固定宽度 | `width` / `min-width` 写死 ≥900px（`max-width` 不算） | ⚠️ |
-| 表格降级 | 有 `<table>` / `el-table` 的文件里没有 `@media`、`data-label`、`isMobile` 之类的窄屏降级 | ⚠️ |
-| 触控尺寸 | 按钮 / 链接的 `height` 低于 44px，或 `<el-button size="small">` | ⚠️ |
+| 表格降级 | 有 `<table>` / `el-table` 的文件里没有 `@media`、`data-label`、`isMobile` 之类的窄屏降级。脚本只有拼整张页面（带 `<!doctype>` / `<html>`）才算，HTML 片段不算 | ⚠️ |
+| 触控尺寸 | 按钮 / 链接的 `height` 低于 44px，或 `<el-button size="small">`（按钮里的图标、文字不算） | ⚠️ |
 | 响应式声明 | 清单 `ui.responsive` 是否为 `true` | ⚠️ |
 | 版本号 | 清单有 `version` | ❌ |
 | 宿主目录挂载 | 只在声明了 `deploy.mounts` 时检查：写错（路径非法、name 重复、容器路径互相包含）或配了不合格的路径是 ❌，还没配置是 ⚠️ | ❌ / ⚠️ |

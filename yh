@@ -772,13 +772,17 @@ valid_code() {
 # 375px 下到底有没有横向滚动，还得按 console/docs/devcenter/checklist.md「移动端与自适应」在浏览器里过一遍
 CK_PRUNE="node_modules .git dist build coverage __pycache__ .venv venv vendor .next .nuxt .output"
 # 脚本 / 模板文件里出现这些标签，就当作带页面（服务端拼的 HTML、模板字符串）
-CK_MARKUP='<(!doctype|html|head|body|meta|style|div|table|main|section|header|nav|ul|form|button)[[:space:]>/]'
+CK_MARKUP='<(!doctype|html|head|body|meta|link|title|style|div|table|main|section|header|nav|ul|form|button)[[:space:]>/]'
+# 脚本里拼的是整张页面才算页面文件；只有 HTML 片段的（Markdown 渲染器、测试断言）不算
+CK_DOCUMENT='<(!doctype|html)[[:space:]>]'
 
 check_list() { # check_list <目录>：要看的源码文件（跳过依赖、构建产物、平台 SDK、压缩文件），一行一个
   local d n prune=""
   for d in $CK_PRUNE; do prune="$prune -name $d -o"; done
   # shellcheck disable=SC2086
   find "$1" \( ${prune% -o} \) -prune -o -type f \( -name '*.html' -o -name '*.htm' -o -name '*.vue' -o -name '*.svelte' \
+    -o -name '*.ejs' -o -name '*.njk' -o -name '*.hbs' -o -name '*.handlebars' -o -name '*.mustache' -o -name '*.pug' \
+    -o -name '*.twig' -o -name '*.liquid' -o -name '*.erb' -o -name '*.cshtml' -o -name '*.razor' \
     -o -name '*.jsx' -o -name '*.tsx' -o -name '*.css' -o -name '*.scss' -o -name '*.sass' -o -name '*.less' -o -name '*.styl' \
     -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.ts' -o -name '*.py' -o -name '*.go' -o -name '*.java' \
     -o -name '*.kt' -o -name '*.rb' -o -name '*.php' -o -name '*.rs' \) \
@@ -845,19 +849,23 @@ check_app() { # check_app <源码目录> [清单路径]：逐项输出，有 ❌
   [ -n "$m" ] || { [ -f "$dir/yh-app.json" ] && m="$dir/yh-app.json"; }
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/yh-check.XXXXXX")"
   check_list "$dir" > "$tmp/all"
-  : > "$tmp/ui"; : > "$tmp/page"; : > "$tmp/script"
+  : > "$tmp/ui"; : > "$tmp/page"; : > "$tmp/doc"; : > "$tmp/script"
   while IFS= read -r f; do
     case "$f" in
       *.css|*.scss|*.sass|*.less|*.styl) echo "$f" >> "$tmp/ui";;
-      *.html|*.htm|*.vue|*.svelte) echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page";;
+      *.html|*.htm|*.vue|*.svelte|*.ejs|*.njk|*.hbs|*.handlebars|*.mustache|*.pug|*.twig|*.liquid|*.erb|*.cshtml|*.razor)
+        echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page"; echo "$f" >> "$tmp/doc";;
+      *.php|*.jsx|*.tsx) # 既是页面也是代码：健康检查路由可能写在里面
+        echo "$f" >> "$tmp/script"; echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page"; echo "$f" >> "$tmp/doc";;
       *) echo "$f" >> "$tmp/script"
-         grep -qiE "$CK_MARKUP" "$f" 2>/dev/null && { echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page"; };;
+         grep -qiE "$CK_MARKUP" "$f" 2>/dev/null && { echo "$f" >> "$tmp/ui"; echo "$f" >> "$tmp/page"; }
+         grep -qiE "$CK_DOCUMENT" "$f" 2>/dev/null && echo "$f" >> "$tmp/doc";;
     esac
   done < "$tmp/all"
   cat "$tmp/ui" "$tmp/script" | LC_ALL=C sort -u > "$tmp/code"
 
   if [ ! -s "$tmp/page" ]; then
-    for v in "viewport meta" "响应式断点" "固定宽度" "表格降级" "触控尺寸"; do ck_item skip "$v" "没有前端页面（.html / .vue / 带 HTML 的模板字符串），跳过"; done
+    for v in "viewport meta" "响应式断点" "固定宽度" "表格降级" "触控尺寸"; do ck_item skip "$v" "没有前端页面（.html / .vue / 服务端模板 / 带 HTML 的模板字符串），跳过"; done
   else
     # 1. viewport
     ck_files 'name[[:space:]]*=[[:space:]]*["'"'"']?viewport' "$tmp/page" > "$tmp/vp"
@@ -891,14 +899,14 @@ check_app() { # check_app <源码目录> [清单路径]：逐项输出，有 ❌
     n="$(wc -l < "$tmp/wide" | tr -d ' ')"
     if [ "$n" -eq 0 ]; then ck_item ok "固定宽度" "没有写死 ≥${lim}px 的 width / min-width"
     else ck_item warn "固定宽度" "$n 处写死 ≥${lim}px 的宽度，375px 屏上会横向滚动（改用 max-width / 百分比 / 断点）"; ck_show "$tmp/wide" "$dir"; fi
-    # 4. 表格：同一文件里要有断点或卡片降级
-    ck_files '<table[[:space:]>]|<el-table[[:space:]>/]' "$tmp/page" > "$tmp/table"
+    # 4. 表格：同一文件里要有断点或卡片降级（只看 $tmp/doc，脚本里的 HTML 片段不算）
+    ck_files '<table[[:space:]>]|<el-table[[:space:]>/]' "$tmp/doc" > "$tmp/table"
     : > "$tmp/bare"
     while IFS= read -r f; do grep -qiE '@media|matchMedia|useViewport|useBreakpoints|isMobile|data-label|card-list' "$f" || echo "$f" >> "$tmp/bare"; done < "$tmp/table"
     if [ ! -s "$tmp/table" ]; then ck_item ok "表格降级" "没有表格"
     elif [ ! -s "$tmp/bare" ]; then ck_item ok "表格降级" "$(wc -l < "$tmp/table" | tr -d ' ') 个文件有表格，同文件内都有窄屏降级"
     else ck_item warn "表格降级" "$(ck_rel "$tmp/bare" "$dir") 有表格，未见卡片降级（手机端需要卡片列表）"; fi
-    # 5. 触控尺寸：按钮 / 链接类规则里 height < 44px，或 Element Plus 小号按钮
+    # 5. 触控尺寸：按钮 / 链接类规则里 height < 44px，或 Element Plus 小号按钮（按钮里的图标、文字不是点击目标，不算）
     while IFS= read -r f; do
       awk -v f="$f" '{
         line = $0; gsub(/[{]/, "{\n", line); gsub(/[}]/, "}\n", line); gsub(/;/, ";\n", line)
@@ -909,7 +917,7 @@ check_app() { # check_app <源码目录> [清单路径]：逐项输出，有 ❌
           if (match(p, /(^|[^-a-zA-Z])(min-)?height[ \t]*:[ \t]*[0-9]+px/)) {
             s = substr(p, RSTART, RLENGTH); v = s; sub(/px$/, "", v); sub(/.*[^0-9]/, "", v)
             ctx = tolower(sel " " p)
-            if (v + 0 >= 16 && v + 0 < 44 && ctx ~ /button|btn|<a[ >]|link|tab|action/) { sub(/^[^a-zA-Z]*/, "", s); print f ":" FNR "  " s }
+            if (v + 0 >= 16 && v + 0 < 44 && ctx ~ /button|btn|<a[ >]|link|tab|action/ && sel !~ /[ \t>+~](svg|img|path|i|span)[ \t]*[{]/) { sub(/^[^a-zA-Z]*/, "", s); print f ":" FNR "  " s }
           }
           if (p ~ /[}]/) sel = ""
         }
