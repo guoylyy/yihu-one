@@ -1,6 +1,7 @@
 <template>
   <div class="app-icon" :style="boxStyle">
     <img v-if="isImg" :src="icon" alt="" />
+    <component :is="SvgIcon" v-else-if="SvgIcon && isBrand" class="svg" :style="{ color: 'var(--yh-primary)', width: size * 0.62 + 'px', height: size * 0.62 + 'px' }" />
     <component :is="SvgIcon" v-else-if="SvgIcon" class="svg" :style="{ color: fg, fontSize: size * 0.5 + 'px' }" />
     <span v-else-if="isEmoji" class="emoji" :style="{ fontSize: size * 0.52 + 'px' }">{{ icon }}</span>
     <span v-else class="letter" :style="{ color: fg, fontSize: size * 0.42 + 'px' }">{{ (name || '?').slice(0, 1) }}</span>
@@ -10,7 +11,7 @@
 <script setup>
 import { computed } from 'vue'
 import { isImageIcon } from '@/utils/format'
-import { ICONS } from '@/utils/icons'
+import { ICONS, isBrandIcon } from '@/utils/icons'
 import { tint } from '@/utils/color'
 
 const props = defineProps({
@@ -23,13 +24,14 @@ const props = defineProps({
 const isImg = computed(() => isImageIcon(props.icon))
 const svgName = computed(() => (props.icon && props.icon.startsWith('svg:') ? props.icon.slice(4) : ''))
 const SvgIcon = computed(() => ICONS[svgName.value] || null)
+const isBrand = computed(() => isBrandIcon(svgName.value))
 const isEmoji = computed(() => !!props.icon && !isImg.value && !svgName.value)
 
 const palette = ['#eff6ff', '#f0fdf4', '#fef3c7', '#fce7f3', '#ede9fe', '#ecfeff', '#fff7ed']
 const seed = computed(() => (props.name || props.icon || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0))
 const fg = computed(() => props.color || 'var(--yh-primary)')
 const boxStyle = computed(() => {
-  const bg = isImg.value ? 'transparent' : (props.color ? tint(props.color, 0.88) : palette[seed.value % palette.length])
+  const bg = isImg.value ? 'transparent' : isBrand.value ? 'var(--yh-fill-2)' : (props.color ? tint(props.color, 0.88) : palette[seed.value % palette.length])
   return {
     width: props.size + 'px',
     height: props.size + 'px',

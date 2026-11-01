@@ -83,6 +83,7 @@ CMD ["node", "server.js"]
 - **仓库里的图片文件**（推荐，最好看）：`"icon": "icon.png"`，路径相对 `yh-app.json` 所在目录。支持 PNG / JPG / GIF / WebP / SVG，不超过 28KB（建议 128×128 的 PNG 或 SVG）。每次发布时平台读这个文件做图标，换图标 = 换文件再发布
 - emoji（`"🛒"`）、图片地址（`"https://…/logo.png"`）
 - 平台内置图标 `"svg:<名称>"`（如 `"svg:cart"`、`"svg:chart"`、`"svg:money"`，名称和控制台图标选择器里鼠标悬停显示的一致），会按 `iconColor` 着色
+- 以虎官方图标 `"svg:brand-<名称>"`（`inbox` `meeting` `expiry` `knowledge` `hr` `crm` `fde` `goods` `training` `finance` `account` `predict`）：中性底 + 平台主色 + 固定强调色，**不跟 `iconColor`**
 
 管理员也可以在「管理 → 应用 → 设置」里直接给代码应用换图标（上传图片、内置图标、emoji、配色），应用的创建者可以在「创作中心 → 上架信息」里换。**在控制台换过以后，之后的发布不再用清单里的图标覆盖它**；想改回清单里的，点「恢复为代码里的图标」。
 

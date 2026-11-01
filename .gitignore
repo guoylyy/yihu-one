@@ -16,3 +16,7 @@ platform/console.env
 
 node_modules/
 .DS_Store
+
+# 验收截图
+artifacts/
+console/artifacts/

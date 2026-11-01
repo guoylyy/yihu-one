@@ -8,6 +8,7 @@ const bad = (fn, re) => assert.throws(fn, (e) => e.status === 400 && re.test(e.m
 
 test('图标：内置图标、emoji、图片地址原样保留，空值存 null', () => {
   assert.equal(validIcon('svg:chart'), 'svg:chart')
+  assert.equal(validIcon('svg:brand-inbox'), 'svg:brand-inbox')
   assert.equal(validIcon(' 🧾 '), '🧾')
   assert.equal(validIcon('https://example.com/a.png'), 'https://example.com/a.png')
   assert.equal(validIcon(''), null)

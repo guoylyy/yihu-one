@@ -8,6 +8,7 @@ import {
   Stamp, CollectionTag, Link, Share, Refresh, Flag, Trophy, Medal, AlarmClock,
   Timer, Lock, Key, Management, Platform, Location, MapLocation, Lightning, Opportunity, Present
 } from '@element-plus/icons-vue'
+import { BRAND_ICONS } from './brand-icons'
 
 /** name → 组件。icon 字段用 `svg:<name>` 表示选中了某个内置图标 */
 export const ICONS = {
@@ -72,10 +73,30 @@ export const ICONS = {
   mapLocation: MapLocation,
   lightning: Lightning,
   opportunity: Opportunity,
-  present: Present
+  present: Present,
+  ...BRAND_ICONS
 }
 
-export const ICON_OPTIONS = Object.keys(ICONS)
+/** 以虎官方图标：固定中性底 + 固定配色，不跟 iconColor */
+export const isBrandIcon = (name) => !!name && name.startsWith('brand-')
+
+/** 图标选择器「以虎官方」分组，按这个顺序显示 */
+export const BRAND_OPTIONS = [
+  { name: 'brand-inbox', label: '收件箱' },
+  { name: 'brand-meeting', label: '会议与纪要' },
+  { name: 'brand-expiry', label: '到期台账' },
+  { name: 'brand-knowledge', label: '知识库' },
+  { name: 'brand-hr', label: '人事考勤' },
+  { name: 'brand-crm', label: '客户' },
+  { name: 'brand-fde', label: '交付管理' },
+  { name: 'brand-goods', label: '商品' },
+  { name: 'brand-training', label: '培训' },
+  { name: 'brand-finance', label: '财务' },
+  { name: 'brand-account', label: '记账' },
+  { name: 'brand-predict', label: '预测' }
+]
+
+export const ICON_OPTIONS = Object.keys(ICONS).filter(n => !isBrandIcon(n))
 
 /** 图标选择器的预设颜色 */
 export const PRESET_COLORS = [

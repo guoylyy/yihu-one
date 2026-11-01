@@ -8,6 +8,21 @@
       </div>
     </div>
 
+    <div class="ip-label">以虎官方</div>
+    <div class="brand-grid">
+      <div
+        v-for="b in BRAND_OPTIONS"
+        :key="b.name"
+        class="ip-cell brand-cell"
+        :class="{ on: icon === 'svg:' + b.name }"
+        :title="b.name"
+        @click="emit('update:icon', 'svg:' + b.name)"
+      >
+        <component :is="ICONS[b.name]" />
+        <span class="brand-label">{{ b.label }}</span>
+      </div>
+    </div>
+
     <div class="ip-label">选择图标</div>
     <div class="icon-grid">
       <div
@@ -25,7 +40,7 @@
     <div class="ip-label">或者填 emoji / 图片地址</div>
     <el-input :model-value="text" placeholder="如 🧾 或 https://…/logo.png" clearable @update:model-value="v => emit('update:icon', v.trim())" />
 
-    <div class="ip-label">图标颜色</div>
+    <div class="ip-label">图标颜色<template v-if="brandPicked">（以虎官方图标用固定配色，这里不生效）</template></div>
     <div class="color-row">
       <span
         v-for="c in PRESET_COLORS"
@@ -49,7 +64,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import AppIcon from '@/components/AppIcon.vue'
-import { ICONS, ICON_OPTIONS, PRESET_COLORS } from '@/utils/icons'
+import { ICONS, ICON_OPTIONS, BRAND_OPTIONS, PRESET_COLORS } from '@/utils/icons'
 import { fileToIcon } from '@/utils/image'
 
 const props = defineProps({
@@ -61,6 +76,7 @@ const emit = defineEmits(['update:icon', 'update:color'])
 
 // 输入框只回显手填的内容（emoji / 图片地址），内置图标和上传的图片不往里放
 const text = computed(() => (/^(svg:|data:)/.test(props.icon) ? '' : props.icon))
+const brandPicked = computed(() => /^svg:brand-/.test(props.icon))
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']
 const IMAGE_MAX = 5 * 1024 * 1024
@@ -103,6 +119,10 @@ function upload() {
 .ip-cell:hover { background: var(--yh-border-soft); }
 .ip-cell.on { background: var(--yh-primary-soft); color: var(--yh-primary); }
 .ip-cell svg { width: 18px; height: 18px; }
+.brand-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 4px; }
+.brand-cell { flex-direction: column; gap: 4px; height: 58px; border: 1px solid var(--yh-border-soft); border-radius: 8px; }
+.brand-cell svg { width: 22px; height: 22px; color: var(--yh-primary); }
+.brand-label { font-size: 11px; line-height: 1.2; white-space: nowrap; }
 .color-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .swatch { width: 22px; height: 22px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; }
 .swatch.on { border-color: var(--yh-text); box-shadow: 0 0 0 2px #fff inset; }

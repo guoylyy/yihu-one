@@ -3,13 +3,14 @@ title: 变更记录
 category: 参考
 order: 61
 summary: 开发中心与接入接口的变化
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # 变更记录
 
 | 日期 | 变化 |
 | --- | --- |
+| 2026-10-31 | **以虎官方图标**：内置图标库新增 12 个 `svg:brand-<名称>`，图标选择器里排在最前（「以虎官方」分组）；用中性底和平台主色，不跟 `iconColor`。清单 `icon` 可以直接写，已有应用的图标不变。见 [应用部署规范](/dev/deploy) |
 | 2026-10-30 | **`yh check` 认服务端模板**：`.ejs` / `.njk` / `.hbs` / `.pug` / `.twig` / `.liquid` / `.erb` / `.cshtml` / `.razor` 等模板和 `.jsx` / `.tsx` / `.php` 都算页面文件，用模板渲染的应用不再误报缺 viewport，但模板里的写死宽度、表格、按钮尺寸也开始受检；表格检查不再把脚本里的 HTML 片段（Markdown 渲染器、测试断言）算进来，拼整张页面的脚本照查；触控尺寸不再把按钮里的图标算进来。见 [应用部署规范 · 上架前自检](/dev/deploy) |
 | 2026-10-30 | **宿主目录挂载**：清单新增 `deploy.mounts`（`name` / `container` / `mode` 默认 `ro` / `required` / `description`），应用声明要读写的宿主目录，管理员用 `yh mount <code> <名称> <宿主路径>` 指定实际路径（存在 `.env` 的 `YH_MOUNT_<NAME>`），只重建容器、不重建镜像，重启、重建、发布都保留；新增 `yh render <code>` 把 compose 打到标准输出核对。`/`、用户主目录、`~/.ssh`、平台目录及其上级一律拒绝，清单的 `env` 不能写 `YH_MOUNT_*`。`yh check` 校验清单写法、未配置时给 ⚠️；控制台「管理 → 应用」显示配置状态和可复制的命令。没声明 `mounts` 的应用不受影响。见 [应用部署规范 · 宿主目录挂载](/dev/deploy)、[上线检查清单](/dev/checklist) |
 | 2026-10-29 | **脚手架默认响应式 + `yh check`**：`yh new` 生成的 Node / Python 模板首页改成移动端基线——`viewport` 带 `viewport-fit=cover`、正文 15px、宽屏表格 ≤768px 自动变「标签 + 值」卡片（纯 CSS）、可点元素 ≥44px、底部操作条适配 iPhone 安全区，两个模板页面一致；模板清单带上新的可选字段 `"ui": { "responsive": true }`（新应用应声明为 `true`）。新增 `yh check [目录] [--strict]` 上架前静态自检：viewport、断点、写死宽度、表格降级、触控尺寸、响应式声明、版本号、`/health` 路由，`--strict` 有 ❌ 时退出码非 0，可放进 CI；`yh add` / `yh up` 之前自动跑一遍，只提示不阻断。见 [应用部署规范 · 上架前自检](/dev/deploy)、[上线检查清单](/dev/checklist) |
