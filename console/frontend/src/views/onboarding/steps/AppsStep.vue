@@ -39,6 +39,7 @@
           <el-button v-else-if="a.state === 'INSTALLING' || requesting[a.code]" size="small" disabled :loading="true" class="app-action">安装中…</el-button>
           <el-button v-else type="primary" size="small" class="app-action" @click="install(a)">{{ a.op?.status === 'FAILED' ? '重新安装' : '安装' }}</el-button>
         </div>
+        <div v-if="failed" class="small bad">{{ failed }}</div>
         <div v-if="pollFailed" class="small bad">暂时连不上控制台，下面的进度可能不是最新的，正在重试…</div>
         <div class="f-help">安装要从 GitHub 拉代码、构建镜像，每个一般 2~5 分钟。可以一次点多个，会一个一个排队装；不用等，可以先去下一步。</div>
       </div>
@@ -64,9 +65,20 @@ const emit = defineEmits(['changed'])
 const OP_TEXT = { PENDING: '排队中，等 yh agent 领取…', RUNNING: '正在安装…', SUCCESS: '安装完成', FAILED: '安装失败' }
 const data = ref(null)
 const installing = ref('')
+const requesting = ref({})
+const failed = ref('')
 let timer = null
 
 const busy = a => a.op && ['PENDING', 'RUNNING'].includes(a.op.status)
+
+/** 行下方的补充说明：安装进度、失败原因、被占用、登记了没跑起来 */
+function note(a) {
+  if (a.op?.status === 'FAILED') return { text: `安装失败：${a.op.message || a.op.error || '详情看管理 → 应用里的日志'}`, bad: true }
+  if (a.op && OP_TEXT[a.op.status] && !busy(a)) return { text: OP_TEXT[a.op.status], bad: false }
+  if (a.state === 'CONFLICT') return { text: `code ${a.code} 已被「${a.takenBy || '别的应用'}」占用，换个 code 或先停用那个应用`, bad: true }
+  if (a.state === 'NOT_RUNNING') return { text: '登记了但没在运行（构建失败或健康检查没过），去管理 → 应用看日志', bad: true }
+  return null
+}
 
 async function load() {
   clearTimeout(timer)
@@ -77,10 +89,14 @@ async function load() {
 }
 async function install(a) {
   installing.value = a.code
+  requesting.value[a.code] = true
   try {
     await onboardingApi.installOfficial(a.code)
     await load()
+  } catch (e) {
+    failed.value = e?.message || '安装没能提交，稍后再试'
   } finally {
+    requesting.value[a.code] = false
     installing.value = ''
   }
 }
