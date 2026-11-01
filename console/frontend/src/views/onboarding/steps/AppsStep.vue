@@ -24,20 +24,23 @@
           description="安装由平台机器上的 yh agent 执行。它不在线时安装会一直排队：在平台目录里运行 ./yh autostart（开机自启 + 常驻 agent），或者让部署工程师看一下。"
         />
         <div v-for="a in data.apps" :key="a.code" class="ob-box app-row">
-          <span class="app-icon">{{ a.icon }}</span>
-          <div class="yh-grow">
+          <AppIcon :icon="a.icon" :name="a.name" :size="40" class="app-icon" />
+          <div class="yh-grow app-info">
             <b>{{ a.name }}</b>
             <div class="yh-muted small">{{ a.description }}</div>
-            <div v-if="a.op && !a.installed" class="small" :class="a.op.status === 'FAILED' ? 'bad' : 'yh-muted'">
-              {{ OP_TEXT[a.op.status] || a.op.status }}
-              <el-button v-if="a.op.status === 'FAILED'" link type="primary" size="small" @click="$router.push('/admin?tab=apps')">看日志</el-button>
+            <div v-if="note(a)" class="small app-note" :class="note(a).bad ? 'bad' : 'yh-muted'">
+              {{ note(a).text }}
+              <el-button v-if="note(a).bad" link type="primary" size="small" @click="$router.push('/admin?tab=apps')">看日志</el-button>
             </div>
           </div>
-          <el-tag v-if="a.installed" type="success">已安装</el-tag>
-          <el-button v-else-if="!busy(a)" type="primary" size="small" :loading="installing === a.code" @click="install(a)">{{ a.op?.status === 'FAILED' ? '重新安装' : '安装' }}</el-button>
-          <el-tag v-else type="info"><el-icon class="is-loading"><Loading /></el-icon> 安装中</el-tag>
+          <el-tag v-if="a.state === 'RUNNING'" type="success" class="app-action">已在运行</el-tag>
+          <el-tag v-else-if="a.state === 'NOT_RUNNING'" type="warning" class="app-action">未运行</el-tag>
+          <el-tag v-else-if="a.state === 'CONFLICT'" type="danger" class="app-action">代码被占用</el-tag>
+          <el-button v-else-if="a.state === 'INSTALLING' || requesting[a.code]" size="small" disabled :loading="true" class="app-action">安装中…</el-button>
+          <el-button v-else type="primary" size="small" class="app-action" @click="install(a)">{{ a.op?.status === 'FAILED' ? '重新安装' : '安装' }}</el-button>
         </div>
-        <div class="f-help">安装要从 GitHub 拉代码、构建镜像，一般 2~5 分钟，可以先去下一步。</div>
+        <div v-if="pollFailed" class="small bad">暂时连不上控制台，下面的进度可能不是最新的，正在重试…</div>
+        <div class="f-help">安装要从 GitHub 拉代码、构建镜像，每个一般 2~5 分钟。可以一次点多个，会一个一个排队装；不用等，可以先去下一步。</div>
       </div>
 
       <div class="ob-section">
@@ -54,6 +57,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
+import AppIcon from '@/components/AppIcon.vue'
 import { onboardingApi } from '@/api/admin'
 
 const emit = defineEmits(['changed'])
@@ -88,7 +92,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 <style scoped>
 @import '../onboarding.css';
 .app-row { display: flex; align-items: center; gap: 12px; }
-.app-icon { font-size: 26px; width: 40px; text-align: center; }
+.app-icon { flex: none; }
 .agent-warn { margin-bottom: 12px; }
 .go { margin-top: 10px; }
 .small { font-size: 12px; }

@@ -17,14 +17,50 @@ const KEY = 'onboarding'
 export const STEPS = ['account', 'company', 'theme', 'models', 'login', 'people', 'notify', 'apps', 'finish']
 const SKIPPABLE = new Set(['theme', 'models', 'login', 'people', 'notify', 'apps'])
 
-/** 官方应用：开通向导里一键安装（走「从 Git 安装」同一套流程，由 yh agent 执行） */
+/** 官方应用：开通向导里一键安装（走「从 Git 安装」同一套流程，由 yh agent 执行）。轻量、当天能用起来的放前面 */
 export const OFFICIAL_APPS = [
   {
-    code: 'fde', name: 'FDE 交付管理', icon: '🧭',
+    code: 'inbox', name: '收件箱', icon: 'svg:brand-inbox',
+    description: '一句话记下要做的事，派给同事；今天该做的、谁在做，一屏看清',
+    git: 'https://github.com/guoylyy/yihu-inbox.git', branch: 'release'
+  },
+  {
+    code: 'meeting', name: '会议与纪要', icon: 'svg:brand-meeting',
+    description: '粘贴会议记录，自动提炼决议、待办和风险；待办可复制进收件箱',
+    git: 'https://github.com/guoylyy/yihu-meeting.git', branch: 'release'
+  },
+  {
+    code: 'expiry', name: '到期台账', icon: 'svg:brand-expiry',
+    description: '合同、证照、资质、保险的到期日一本账，到期前主动提醒，不再漏',
+    git: 'https://github.com/guoylyy/yihu-expiry.git', branch: 'release'
+  },
+  {
+    code: 'fde', name: 'FDE 交付管理', icon: 'svg:brand-fde',
     description: '项目、里程碑、任务、工时与知识库；工程师和 AI 智能体一起交付。接入了老板的经营简报',
     git: 'https://github.com/guoylyy/yihu-fde.git', branch: 'release'
   }
 ]
+
+const OP_BUSY = ['PENDING', 'RUNNING']
+const APP_SELECT = { code: true, name: true, kind: true, managed: true, status: true, runtime: true }
+
+/**
+ * 官方应用现在的情况。纯函数，便于测试
+ * NONE 没装 / INSTALLING 排队或安装中 / RUNNING 在运行 / NOT_RUNNING 登记了但没在运行（构建失败、健康检查没过、被停用）/ CONFLICT 这个 code 被别的应用占了
+ */
+export function installState(app, op) {
+  if (app && !(app.kind === 'HOSTED' && app.managed)) return 'CONFLICT'
+  if (op && OP_BUSY.includes(op.status)) return 'INSTALLING'
+  if (!app) return 'NONE'
+  return app.status === 'ACTIVE' && app.runtime?.state === 'running' ? 'RUNNING' : 'NOT_RUNNING'
+}
+
+/** 从操作日志里取失败原因：yh 的 die 以 ✗ 开头，超时这类平台自己写的日志没有，取最后一行 */
+export function failReason(log) {
+  const lines = String(log || '').split('\n').map(s => s.trim()).filter(Boolean)
+  const line = lines.filter(s => s.startsWith('✗')).pop() || lines.pop() || ''
+  return line.replace(/^✗\s*/, '').slice(0, 200) || null
+}
 
 async function state() {
   const row = await prisma.systemSetting.findUnique({ where: { key: KEY } })
@@ -124,26 +160,62 @@ export async function officialApps(ctx) {
   assertAdmin(ctx)
   const codes = OFFICIAL_APPS.map(a => a.code)
   const [installed, ops, plat, boss] = await Promise.all([
-    prisma.app.findMany({ where: { code: { in: codes }, deletedAt: null }, select: { code: true, status: true } }),
-    prisma.platformOp.findMany({ where: { kind: 'INSTALL', appCode: { in: codes } }, orderBy: { id: 'desc' }, take: 20 }),
+    prisma.app.findMany({ where: { code: { in: codes }, deletedAt: null }, select: APP_SELECT }),
+    // 这个接口安装时每 4 秒查一次，日志（可能很大）只取失败的那几条
+    prisma.platformOp.findMany({ where: { kind: 'INSTALL', appCode: { in: codes } }, orderBy: { id: 'desc' }, take: 20, select: { id: true, appCode: true, status: true } }),
     platform.overview(ctx),
     prisma.app.findFirst({ where: { code: BOSS_AGENT_CODE, deletedAt: null }, select: { id: true, name: true, status: true } })
   ])
+  const latest = OFFICIAL_APPS.map(a => ops.find(o => o.appCode === a.code)).filter(Boolean)
+  const failed = latest.filter(o => o.status === 'FAILED').map(o => o.id)
+  const logs = failed.length ? await prisma.platformOp.findMany({ where: { id: { in: failed } }, select: { id: true, log: true } }) : []
   return {
     agent: plat.agent, boss,
     apps: OFFICIAL_APPS.map(a => {
       const app = installed.find(x => x.code === a.code)
-      const op = ops.find(o => o.appCode === a.code)
-      return { ...a, installed: !!app, status: app?.status || null, op: op ? { id: op.id, status: op.status } : null }
+      const op = latest.find(o => o.appCode === a.code)
+      const state = installState(app, op)
+      const log = op?.status === 'FAILED' ? logs.find(l => l.id === op.id)?.log : null
+      return {
+        ...a, state, installed: state === 'RUNNING' || state === 'NOT_RUNNING', status: app?.status || null,
+        takenBy: state === 'CONFLICT' ? app.name : null,
+        op: op ? { id: op.id, status: op.status, reason: log ? failReason(log) : null } : null
+      }
     })
   }
 }
 
+// 控制台只有一个进程：同一个 code 的安装请求还没落库时，后来的等它，查不到 PENDING 也不会重复排队
+const installing = new Map()
+
+/** 重复点击是幂等的：没装才排队，其余情况（已在运行、正在装、code 被占）都如实返回现状，不报错、不产生新操作 */
 export async function installOfficial(ctx, code) {
   assertAdmin(ctx)
   const a = OFFICIAL_APPS.find(x => x.code === code)
   if (!a) throw badRequest('没有这个官方应用')
-  return platform.requestOp(ctx, { kind: 'INSTALL', appCode: a.code, params: { git: a.git, branch: a.branch } })
+  if (installing.has(a.code)) return installing.get(a.code)
+  const job = requestInstall(ctx, a).finally(() => installing.delete(a.code))
+  installing.set(a.code, job)
+  return job
+}
+
+async function requestInstall(ctx, a) {
+  const [app, last] = await Promise.all([
+    prisma.app.findFirst({ where: { code: a.code, deletedAt: null }, select: APP_SELECT }),
+    prisma.platformOp.findFirst({ where: { kind: 'INSTALL', appCode: a.code }, orderBy: { id: 'desc' }, select: { id: true, status: true } })
+  ])
+  const state = installState(app, last)
+  if (state === 'NONE') {
+    const op = await platform.requestOp(ctx, { kind: 'INSTALL', appCode: a.code, params: { git: a.git, branch: a.branch } })
+    return { code: a.code, state: 'INSTALLING', queued: true, message: '已开始安装', op: { id: op.id, status: op.status } }
+  }
+  const message = {
+    INSTALLING: `${a.name}正在安装`,
+    RUNNING: `${a.name}已在运行`,
+    NOT_RUNNING: `${a.name}已安装但没在运行，到「管理 → 应用」查看日志、重新发布或移除`,
+    CONFLICT: `应用代码 ${a.code} 已被「${app?.name}」占用，先在「管理 → 应用」里移除或改用别的代码`
+  }[state]
+  return { code: a.code, state, queued: false, message, op: last ? { id: last.id, status: last.status } : null }
 }
 
 // ---------------------------------------------------------------- 人员：表格导入

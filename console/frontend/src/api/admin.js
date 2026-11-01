@@ -57,7 +57,7 @@ export const onboardingApi = {
   complete: () => post('/admin/onboarding/complete'),
   testLogin: provider => post('/admin/onboarding/test-login', { provider }, { timeout: 30000 }),
   messageMe: () => post('/admin/onboarding/message-me', null, { timeout: 30000 }),
-  officialApps: () => get('/admin/onboarding/official-apps'),
+  officialApps: (silent = false) => get('/admin/onboarding/official-apps', null, { silent }),
   installOfficial: code => post(`/admin/onboarding/official-apps/${code}/install`),
   importPeople: data => post('/admin/onboarding/import-people', data, { timeout: 180000 })
 }
