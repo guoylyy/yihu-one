@@ -5,7 +5,7 @@
 **The self-hosted platform that makes it easy for a company to build and deploy AI agents and apps — and to bring the systems it already has into one place.**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0%20beta-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.10%20beta-orange.svg)](CHANGELOG.md)
 ![Platform](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux-lightgrey.svg)
 
 English · [简体中文](README.zh-CN.md)
@@ -14,44 +14,78 @@ English · [简体中文](README.zh-CN.md)
 
 ---
 
-Every internal tool a company builds needs the same groundwork before it does anything useful: logins, user and department data, a server, a deploy pipeline, backups, and now an AI model and a way for AI to use it. Every system the company already bought or built has its own login and lives on its own island.
+## Contents
 
-Yihu One (以虎 One) does that groundwork once. It runs on a single machine — a Mac mini or a Linux server — and gives your company:
+- [Why this exists](#why-this-exists)
+- [What you get](#what-you-get)
+- [Official apps](#official-apps)
+- [What's inside](#whats-inside)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Building an app](#building-an-app)
+- [CLI](#cli)
+- [Documentation](#documentation)
+- [License](#license)
+
+## Why this exists
+
+Every internal tool needs the same groundwork before it does anything useful: logins, user and department data, a server, a deploy pipeline, backups — and now a model and a way for AI to use the tool. Every system you already bought or built has its own login and lives on its own island.
+
+Yihu One (以虎 One) does that groundwork once, on a single machine (a Mac mini or a Linux server). The platform itself has no business features: approvals, CRM, attendance… each one is an app. The console only configures users, sign-in, models and apps.
+
+> **Status:** 0.6.10 beta ([semantic versioning](CHANGELOG.md) — 0.x is beta), in production use. The UI and most docs are in Simplified Chinese.
+
+## What you get
 
 ### 🤖 Build and ship AI agents
 
-- **No-code agents:** anyone can make an AI assistant from a prompt, a set of tools and a model, try it, and share it with colleagues or publish it company-wide
-- **Agents that can act:** every app exposes its features as MCP tools; agents call them **as the current user, with that user's permissions**, and ask for confirmation before writing anything
-- **One MCP endpoint for everything:** external agents (Claude, Cursor, your own) connect to `/api/mcp` with a personal API key and get every tool the user is allowed to use
-- **Managed models:** configure OpenAI-compatible providers or Anthropic once; agents and apps share them, with per-role access and quotas
-- **Knowledge base:** upload company documents; agents answer with cited sources
-- **A home page per person:** everyone's workspace home is their own — rearrange cards on the page, or tell your agent "put my pending approvals and this month's margin trend on my home page". Data cards call apps' read-only MCP tools as the viewer
-- **Asset center:** company templates, brand VI (logo, colours, fonts, rules) and design components, versioned with an owner; agents fetch the structured brand spec over MCP and build slides or pages that follow it
-- **Skill center:** share Agent Skills (a folder with a `SKILL.md`, the format Claude Code and Codex use) with colleagues or company-wide; agents upload, install and check for updates over MCP
+- **No-code agents** — build an assistant from a prompt, tools and a model; share it with colleagues or publish it company-wide
+- **Agents that act** — apps expose their features as MCP tools; agents call them as the current user, with that user's permissions, and confirm before writing
+- **One MCP endpoint** — Claude, Cursor or your own agent connect to `/api/mcp` with a personal API key and get every tool the user may use
+- **Managed models** — configure OpenAI-compatible or Anthropic providers once; agents and apps share them, with per-role access and quotas
+- **Knowledge base** — upload company documents; agents answer with cited sources
+- **A home page per person** — rearrange cards yourself or ask your agent to; data cards call apps' read-only MCP tools as the viewer
+- **Asset center** — versioned templates, brand VI and design components; agents fetch the brand spec over MCP and follow it
+- **Skill center** — share Agent Skills (folders with a `SKILL.md`); agents upload, install and update them over MCP
 
-### 🚀 Build and deploy apps, fast
+### 🚀 Build and deploy apps
 
-- **Publish from your own agent:** tell Claude Code, Codex or any MCP agent "publish this to Yihu One" in your project folder — it picks the app type, asks who should see it, publishes, and reports the URL or a plain-language failure reason. Same review rules as the web UI
-- **From template to live in two commands:** `yh new` gives you a Node or Python app with login, health check and MCP already wired up; `yh up` puts it online
-- **Push to deploy:** push to the `release` branch and the platform builds, health-checks and ships it — or rolls back and notifies the team
-- **No servers to manage per app:** one container, database and isolated network per app, behind one domain and HTTPS
-- **No code at all:** describe a small tool (sign-up sheet, booking, dashboard) in chat and AI generates a sandboxed lite app
+- **Publish from your own agent** — tell Claude Code or Codex "publish this to Yihu One"; same review rules as the web UI
+- **Two commands to go live** — `yh new` scaffolds a Node or Python app with login, health check and MCP; `yh up` deploys it
+- **Push to deploy** — push to `release`; the platform builds, health-checks and ships it, or rolls back and notifies the team
+- **No servers per app** — one container, database and isolated network per app, behind one domain and HTTPS
+- **No code at all** — describe a small tool (sign-up sheet, booking, dashboard) in chat and get a sandboxed lite app
 
 ### 🔌 Integrate the systems you already have
 
-- **No-code single sign-on for off-the-shelf tools:** the platform is a standard **OpenID Connect provider**, so GitLab, Grafana, Jenkins, Metabase and anything else with a "Generic OIDC" login setting connect by filling in a form
-- **Register any existing system** — bought SaaS, an old ERP, a service on another server — as an external app. It stays where it is, and gets:
-  - single sign-on from the workspace (OIDC / OAuth2), so users stop juggling accounts
-  - the platform's user and department data
-  - a place in every user's AI assistant, once it exposes MCP tools
-  - access to the managed models
-- **Ready-made apps:** e.g. [FDE delivery management](https://github.com/guoylyy/yihu-fde) (projects, milestones, tasks, timesheets, knowledge base — engineers and AI agents delivering together) installs with `yh add fde --git https://github.com/guoylyy/yihu-fde.git && yh up fde`: sign-in, database and its ~110 AI tools are wired up automatically
-- **One workspace:** every app — built here or elsewhere — in one place, with one marketplace, one permission model and one audit log
-- **Your company's look, not ours:** the console's whole visual identity (colours, fonts, corner radius, shadows, logo) is a theme. Pick a preset, adjust it to your brand guidelines with a live preview; each space (company or customer) can have its own
+- **No-code SSO for off-the-shelf tools** — the platform is an OpenID Connect provider; GitLab, Grafana, Jenkins, Metabase and anything with "Generic OIDC" connect through a form
+- **Register any existing system** — it stays where it runs and gets SSO, the platform's user and department data, a place in the AI assistant (once it serves MCP) and the managed models
+- **Ready-made apps** — 8 general-purpose official apps, one command each; see [Official apps](#official-apps)
+- **One workspace** — every app, built here or elsewhere, in one marketplace with one permission model and one audit log
+- **Your company's look** — colours, fonts, corner radius, shadows and logo are a theme; each space (company or customer) can have its own
 
-> **The platform itself has no business features.** Approvals, inventory, CRM, attendance… each one is an app. The console only configures users, sign-in, models and apps.
+## Official apps
 
-> **Status:** beta (0.1.0, [semantic versioning](CHANGELOG.md) — 0.x is beta) but in production use. The UI and most docs are currently in Simplified Chinese.
+What the platform does day to day depends on the apps you install. There are 11 official apps: 8 general-purpose ones anyone can install, and 3 built for a customer.
+
+Each general-purpose app is a public Git repository. One command installs it; sign-in, its database and its AI tools are wired up automatically.
+
+| App | What it does | Version | Install |
+| --- | --- | --- | --- |
+| [Inbox](https://github.com/guoylyy/yihu-inbox) | Capture to-dos in a sentence, assign them to colleagues, tidy up in bulk, import tasks from other systems, review weekly patterns | 0.2.2 | `yh add inbox --git https://github.com/guoylyy/yihu-inbox.git && yh up inbox` |
+| [Meetings & Minutes](https://github.com/guoylyy/yihu-meeting) | Record meetings or import minutes; AI extracts the meeting details, decisions, action items and risks, grouped by project | 0.2.2 | `yh add meeting --git https://github.com/guoylyy/yihu-meeting.git && yh up meeting` |
+| [Expiry Ledger](https://github.com/guoylyy/yihu-expiry) | One ledger for contract and licence expiry dates: upload a file and AI fills in the entry, see days left at a glance, get reminded before expiry | 0.2.4 | `yh add expiry --git https://github.com/guoylyy/yihu-expiry.git && yh up expiry` |
+| [FDE Delivery](https://github.com/guoylyy/yihu-fde) | Projects, milestones, tasks, timesheets and a knowledge base; engineers and AI agents delivering together | 0.3.1 | `yh add fde --git https://github.com/guoylyy/yihu-fde.git && yh up fde` |
+| [HR & Attendance](https://github.com/guoylyy/yihu-hr) | Clock-in, leave and business-trip summaries from DingTalk / Feishu / WeCom, annual-leave balances, contracts, staff costs, 1:1s, people profiles | 0.3.6 | `yh add hr --git https://github.com/guoylyy/yihu-hr.git && yh up hr` |
+| [Group Finance](https://github.com/guoylyy/yihu-finance) | Accounts and transactions across companies, receipts and payments, payroll and expenses, invoices and loans, month-end close, cash forecasts | 1.4.0 | `yh add finance --git https://github.com/guoylyy/yihu-finance.git && yh up finance` |
+| [Personal Finance](https://github.com/guoylyy/yihu-personal-account) | A private ledger: net worth, income and spending, budgets, investment holdings, money lent and borrowed, AI bookkeeping | 1.5.2 | `yh add personal-account --git https://github.com/guoylyy/yihu-personal-account.git && yh up personal-account` |
+| [Knowledge Base](https://github.com/guoylyy/yihu-knowledge) | Mobile-first personal knowledge base: Markdown notes, controlled sharing with access audit, backlink graph, AI summaries | 1.5.4 | `yh add knowledge --git https://github.com/guoylyy/yihu-knowledge.git && yh up knowledge` |
+
+The first four can also be installed with one click in the console's setup wizard.
+
+**Customer-built apps.** The other three — a trade CRM, a product catalogue and a trade-training app — were built for one customer and aren't published. They're not installable; they show what a company-specific app on the platform looks like.
+
+What each app stores, how many AI tools it has and when to use it: [app catalogue](docs/应用清单.md) (Chinese).
 
 ## What's inside
 
@@ -61,7 +95,7 @@ Yihu One (以虎 One) does that groundwork once. It runs on a single machine —
 - Models and AI: OpenAI-compatible providers (Qwen, DeepSeek, Kimi, GLM…), Anthropic, OpenHex; per-role access and daily quotas
 - A browser setup wizard on first run, system settings, audit log
 
-**App marketplace** — four kinds of apps, all versioned and reviewable
+**App marketplace** — five kinds of apps, all versioned and reviewable
 
 | Kind | What it is | Runs where | Who can publish |
 | --- | --- | --- | --- |
@@ -99,6 +133,8 @@ docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v /opt/yihu-on
 ```
 
 Open http://localhost:18080. Test mode creates an `admin` account and prints its password, and the login page has a "dev login" that lets you pick any user. `--demo` also installs two demo apps (Node and Python). Add `--lan` to serve on your LAN IP. Run `./yh destroy` when you're done.
+
+Want to see real apps instead of the demos? Install any of the [official apps](#official-apps) with the command in its row.
 
 ### Deploy for a company
 
@@ -262,6 +298,22 @@ cd console/backend && npm test   # unit tests, no database needed
 ```
 
 `selftest.sh` works in a temp directory and uses port 18080 and `yh-*` container names. It refuses to run on a machine that already has a platform installed.
+
+## Documentation
+
+Docs live in [`docs/`](docs/) and are in Chinese.
+
+| Doc | What's in it |
+| --- | --- |
+| [Deployment guide](docs/部署手册.md) | Preparation checklist, install, sign-in setup, acceptance, handover, upgrades, troubleshooting |
+| [Architecture](docs/架构说明.md) | Platform vs. app boundary, marketplace, console ↔ host, data model |
+| [App integration spec](docs/应用接入规范.md) | Every rule an app must follow, with links to the details |
+| [Versioning](docs/版本管理.md) | Version rules, where the version shows up, how to bump it and cut a release |
+| [App catalogue](docs/应用清单.md) | The official apps in detail |
+| [Release flow](docs/发布方式.md) | Tunnel-forwarding deployment and how auto-deploy works |
+| [Open-source scope and license](docs/开源边界与协议说明.md) | What's open source and what stays private |
+
+Developer docs for app builders are in [`console/docs/devcenter/`](console/docs/devcenter/); a running platform serves them at `/dev`.
 
 ## Contributing
 
