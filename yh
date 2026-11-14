@@ -658,6 +658,7 @@ console_pull() {
     }
   fi
   ver="$(platform_version)"
+  [ -n "$ver" ] || { gray "  读不到 VERSION，不下载预构建镜像"; return 1; }
   ref="${CONSOLE_IMAGE_REPO:-ghcr.io/guoylyy/yihu-one-console}:$ver"
   gray "  下载预构建的控制台镜像 $ref"
   docker pull -q "$ref" >/dev/null 2>&1 || { gray "  拉不到预构建镜像"; return 1; }
@@ -1566,14 +1567,16 @@ cmd_watch() {
     new="$(git -C "$d/src" ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)"
     [ -n "$new" ] || { echo "[$(date '+%F %T')] ${c}：查不到远端分支 ${branch}（网络、权限，或还没推过）"; continue; }
     [ "$new" = "$(git -C "$d/src" rev-parse HEAD)" ] && continue
+    # 先去重再打日志：自动发布失败过的提交、手动发布已通知过的提交都静默跳过，不每轮刷一行
     [ "$new" = "$(cat "$d/.deploy-failed" 2>/dev/null)" ] && continue
-    echo "[$(date '+%F %T')] ${c}：$branch 有新提交 ${new:0:7}"
     if [ "$mode" = "manual" ]; then
       [ "$new" = "$(cat "$d/.deploy-notified" 2>/dev/null)" ] && continue
+      echo "[$(date '+%F %T')] ${c}：$branch 有新提交 ${new:0:7}（手动发布，已通知）"
       echo "$new" > "$d/.deploy-notified"
       notify "🆕 $(mf "$m" .name) 有新版本" "#### 🆕 $(mf "$m" .name) 有新版本 ${new:0:7}\n\n该应用为手动发布，确认后在控制台「管理 → 应用」点「发布」，或在服务器上执行 \`yh update $c\`"
       continue
     fi
+    echo "[$(date '+%F %T')] ${c}：$branch 有新提交 ${new:0:7}"
     deploy_git "$c" "$branch" "自动"
   done
   deploy_unlock
@@ -1587,7 +1590,11 @@ cmd_watch() {
 #   升级前备份平台文件和控制台数据库，控制台起不来自动回滚。应用、应用数据、yh.env 不动
 UPGRADE_DIR="$ROOT/backups/upgrade"
 
-platform_version() { local v; v="$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null)"; echo "${v:-0.0.0}"; }
+# 读不到 VERSION（升级 / 自更新换文件的瞬间、文件被误删）时不编一个 0.0.0 出来：
+# platform_version_file 只读文件，读不到输出空；platform_version 读不到就沿用本进程上一次读到的版本，都没有才输出空
+platform_version_file() { local v; v="$(tr -d '[:space:]' 2>/dev/null < "$ROOT/VERSION")"; [ "$v" = "0.0.0" ] && v=""; echo "$v"; }
+YH_KNOWN_VERSION="$(platform_version_file)"
+platform_version() { local v; v="$(platform_version_file)"; echo "${v:-$YH_KNOWN_VERSION}"; }
 platform_mode() { if [ -d "$ROOT/.git" ]; then echo git; else echo package; fi; }
 sha256_of() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi; }
 
@@ -1640,7 +1647,7 @@ upgrade_notify_new() { # upgrade_notify_new <新版本>：每个版本只通知�
 # 查一次新版本并报给控制台。会 die，agent 里放进子 shell 调用
 upgrade_check() {
   local cur new rc=0
-  cur="$(platform_version)"
+  cur="$(platform_version)"; cur="${cur:-未知}" # 未知按 0.0.0 比较（ver_cmp 把非数字当 0），读不到版本时仍能升级修复
   if [ "$(platform_mode)" = "git" ]; then
     report_platform
     green "这台机器是从 Git 安装的：平台跟踪 ${PLATFORM_BRANCH:-release} 分支，由 yh agent 自动更新（当前 ${cur}）"
@@ -1796,7 +1803,7 @@ cmd_upgrade() {
   [ "$(platform_mode)" = "package" ] || die "这台机器是从 Git 安装的：平台跟踪 ${PLATFORM_BRANCH:-release} 分支，由 yh agent 自动更新，不用 yh upgrade"
 
   local cur new="" url sha got tmp rc
-  cur="$(platform_version)"
+  cur="$(platform_version)"; cur="${cur:-未知}" # 同 upgrade_check
   tmp="$(mktemp -d)"
   if [ -n "$from_console" ]; then
     step "从控制台取上传的更新包 #$from_console"
@@ -1955,14 +1962,26 @@ cmd_agent() {
   local i=0
   until docker info >/dev/null 2>&1; do i=$((i + 1)); [ $i -gt 60 ] && die "5 分钟内 Docker 没起来"; sleep 5; done
   export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
-  local now last_watch=0 last_report=0 last_check=0 last_public=0 ver
-  ver="$(platform_version)"
+  local now last_watch=0 last_report=0 last_check=0 last_public=0 ver cur ver_missing=""
+  ver="$(platform_version_file)"
   while :; do
     now="$(date +%s)"
     # 平台刚升级过（yh upgrade 或控制台里点的）：换成新版本的脚本接着跑
-    if [ "$(platform_version)" != "$ver" ] && ! deploy_locked; then
-      echo "[$(date '+%F %T')] 平台已从 $ver 更新到 $(platform_version)，重启 agent"
-      exec /bin/bash "$ROOT/yh" agent
+    # 读不到 VERSION 时跳过比对（空值、0.0.0 都不算「升级了」），警告每次缺失只打一行，免得每 4 秒刷一行
+    cur="$(platform_version_file)"
+    if [ -z "$cur" ]; then
+      [ -n "$ver_missing" ] || echo "[$(date '+%F %T')] 警告：读不到 VERSION，跳过版本比对"
+      ver_missing=1
+    else
+      [ -z "$ver_missing" ] || echo "[$(date '+%F %T')] VERSION 已恢复（${cur}）"
+      ver_missing=""
+      YH_KNOWN_VERSION="$cur"
+      # 启动时就没读到版本：没有可比的，记下当前版本，不重启
+      [ -n "$ver" ] || ver="$cur"
+      if [ "$cur" != "$ver" ] && ! deploy_locked; then
+        echo "[$(date '+%F %T')] 平台已从 $ver 更新到 ${cur}，重启 agent"
+        exec /bin/bash "$ROOT/yh" agent
+      fi
     fi
     # 主循环自己不持锁：锁上是自己的 pid，说明是某个子 shell 被强杀后留下的
     [ "$(cat "$ROOT/.deploy.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$ROOT/.deploy.lock"
@@ -2319,7 +2338,7 @@ case "$cmd" in
   public-check) cmd_public_check;;
   upgrade) cmd_upgrade "$@";;
   version|--version|-v) v="$(platform_version)"
-    case "$v" in 0.*) echo "以虎 One v${v} Beta（$(platform_mode) 安装）";; *) echo "以虎 One v${v}（$(platform_mode) 安装）";; esac;;
+    case "$v" in "") echo "以虎 One（读不到 VERSION，$(platform_mode) 安装）";; 0.*) echo "以虎 One v${v} Beta（$(platform_mode) 安装）";; *) echo "以虎 One v${v}（$(platform_mode) 安装）";; esac;;
   history) cmd_history "$@";;
   passwd) cmd_passwd "$@";;
   notify-test) load_env
