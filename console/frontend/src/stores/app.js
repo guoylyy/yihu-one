@@ -3,6 +3,7 @@ import { authApi } from '@/api/auth'
 import { setupApi } from '@/api/setup'
 import { applyTheme } from '@/utils/theme'
 import { readBrandCache, writeBrandCache } from '@/utils/brandCache'
+import { brandName } from '@/utils/title'
 
 // 公开的平台配置（/api/auth/config）：名称、组织、功能开关。后台「系统设置」改了立即生效
 /** 浏览器标签页图标跟随 LOGO；没设置 LOGO 时用主题自带的图标，再没有用默认图标 */
@@ -25,11 +26,13 @@ export const useAppStore = defineStore('app', {
     cachedBrand: readBrandCache(),
     // 所在空间自己的 VI（/api/me 的 brand）；null = 跟随平台
     brand: null,
+    // 页面运行时给的标题（如轻应用的应用名）：{ path, title }，只对该 fullPath 生效
+    titleOverride: null,
     loading: null,
     needsSetup: null // null=未知 / true=待初始化 / false=已初始化
   }),
   getters: {
-    workspaceName: s => s.brand?.name || s.config?.workspaceName || s.cachedBrand?.name || '以虎 One',
+    workspaceName: s => brandName(s),
     // 英文名：设置过（哪怕是空串）就用设置的值，空串表示不显示
     workspaceSubtitle: s => {
       if (s.config && 'workspaceSubtitle' in s.config) return s.config.workspaceSubtitle || ''
@@ -75,6 +78,10 @@ export const useAppStore = defineStore('app', {
     setBrand(brand) {
       this.brand = brand || null
       this.applyLook()
+    },
+    /** 页面拿到自己的名字后调（如轻应用加载完拿到应用名），标题变成「名字 · 品牌名」 */
+    setPageTitle(path, title) {
+      this.titleOverride = title ? { path, title } : null
     },
     applyLook() {
       applyTheme(this.theme)

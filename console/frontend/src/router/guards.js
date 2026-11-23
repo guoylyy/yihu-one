@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/app'
 import { onboardingApi } from '@/api/admin'
 import { getToken } from '@/utils/token'
 import { safeRedirect, isAppPath } from '@/utils/dingtalk'
+import { applyTitle as writeTitle, bindTitle } from '@/utils/title'
 
 /** 未登录跳 /login?redirect=；按 meta.permission 拦截 admin */
 export function installGuards(router) {
@@ -70,13 +71,13 @@ export function installGuards(router) {
     return true
   })
 
-  // 系统设置里改了工作台名称：配置加载 / 刷新后重设标题（pinia 在首次导航时才可用，懒订阅）
+  // 配置加载 / 刷新、setBrand 换空间、页面给了应用名：store 一变就按当前路由重设标题（pinia 在首次导航时才可用，懒订阅）
   let subscribed = false
   router.afterEach(to => {
     if (!subscribed) {
       subscribed = true
       const app = useAppStore()
-      app.$subscribe(() => applyTitle(router.currentRoute.value))
+      bindTitle(app, () => router.currentRoute.value)
       app.load()
     }
     applyTitle(to)
@@ -103,9 +104,7 @@ function hasCurrentRoute(router) {
   return !!router.currentRoute.value.matched.length
 }
 
-/** 浏览器标题：「页面 · 工作台名称」；开发中心页面自己设置 */
+/** 浏览器标题：首页「品牌名」，其余「页面 · 品牌名」；开发中心页面自己设置（规则在 utils/title.js） */
 export function applyTitle(to) {
-  if (!to || to.meta?.devDoc) return
-  const name = useAppStore().workspaceName
-  document.title = to.meta?.title ? `${to.meta.title} · ${name}` : name
+  return writeTitle(to, useAppStore())
 }

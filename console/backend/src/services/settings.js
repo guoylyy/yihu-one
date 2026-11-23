@@ -19,7 +19,7 @@ export const SCHEMA = {
     label: '基本信息',
     page: 'settings',
     fields: {
-      workspaceName: { label: '平台名称', type: 'text', default: '以虎 One', help: '登录页、浏览器标题、侧边栏显示' },
+      workspaceName: { label: '平台名称', type: 'text', default: '以虎 One', help: '登录页、浏览器标签页、侧边栏显示' },
       workspaceSubtitle: { label: '平台英文名', type: 'text', default: 'YIHU ONE', allowEmpty: true, help: '侧边栏平台名称下面那行小字，留空则不显示' },
       logo: { label: 'LOGO', type: 'image', default: '', help: '侧边栏、登录页、授权页、开发中心和浏览器标签页图标都用它；建议正方形 PNG / SVG，不超过 200KB。不设置用「外观与主题」里预设自带的 LOGO（以虎科技 VI 是以虎标志），预设没有 LOGO 时显示平台名称的第一个字' },
       companyName: { label: '组织名称', type: 'text', default: '', help: 'AI 助手的系统提示里会用到' },

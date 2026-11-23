@@ -47,6 +47,7 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import AppIcon from '@/components/AppIcon.vue'
 import LiteFrame from '@/components/LiteFrame.vue'
 import { liteApi } from '@/api/market'
+import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,6 +62,8 @@ async function load() {
   error.value = ''
   try {
     boot.value = await liteApi.bootstrap(route.params.id, versionId)
+    // 标签页标题用应用名：「<应用名> · <品牌名>」（iframe 里的 <title> 不影响标签页）
+    useAppStore().setPageTitle(route.fullPath, boot.value?.app?.name)
   } catch (e) {
     error.value = e.message
   } finally {
